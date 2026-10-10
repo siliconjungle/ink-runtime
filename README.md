@@ -48,3 +48,12 @@ per call; this is a durability baseline, not a performance claim. See the distri
 [durable host contract](https://github.com/siliconjungle/ink-lang/blob/main/docs/durable-host.md).
 
 Run `node --test tests/durable-state.mjs` for failure-injection and file checks.
+
+`emit_c_program_selected`, `emit_selected` and `module::emit_selected` keep the
+core's sealed selection witness during complete/native/Wasm and mixed-module
+assembly. Selected C and JavaScript state use `snapshot::selected_layout` from
+the core; Rust state code comes from its selected emitter. Baseline checkpoints
+and durable files remain usable by checked plans for the same source. Raw
+program emission keeps its own namespace, and no identity override is accepted.
+CLI `emit-state` uses `COMPLETE_STATE_RUNNER` and `emit_native_state_host`; the
+specialised `STATE_RUNNER` remains available for direct state-emitter harnesses.

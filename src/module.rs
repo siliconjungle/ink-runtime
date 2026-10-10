@@ -121,10 +121,28 @@ fn symbols(source: &str, prefix: &str) -> String {
     out
 }
 pub fn emit(module: &CheckedModule, dir: &Path) -> LangResult<()> {
+    emit_checked(module, None, dir)
+}
+pub fn emit_selected(
+    selected: &ink_core::optimisation::CheckedSelection,
+    dir: &Path,
+) -> LangResult<()> {
+    emit_checked(selected.module(), Some(selected), dir)
+}
+fn emit_checked(
+    module: &CheckedModule,
+    selected: Option<&ink_core::optimisation::CheckedSelection>,
+    dir: &Path,
+) -> LangResult<()> {
     let p = module.program();
     fs::create_dir_all(dir.join("native/src")).map_err(|e| e.to_string())?;
-    super::emit_c_program(module, &dir.join("cpu"))?;
-    let js = ink_lowering_js::lower(module)?;
+    let js = if let Some(selected) = selected {
+        super::emit_c_program_selected(selected, &dir.join("cpu"))?;
+        ink_lowering_js::lower_selected(selected)?
+    } else {
+        super::emit_c_program(module, &dir.join("cpu"))?;
+        ink_lowering_js::lower(module)?
+    };
     super::put(dir, "program.mjs", js.javascript)?;
     super::put(dir, "state-wasm.mjs", super::STATE_WASM_HOST)?;
     super::emit_durable_hosts(dir)?;
@@ -192,7 +210,11 @@ pub fn emit(module: &CheckedModule, dir: &Path) -> LangResult<()> {
         };
         functions.push(capability);
     }
-    let manifest = json!({"schema":3,"runtime_abi":"ink-module-v1","core_sha256":module.identity()?,"core_semantics":module.semantics(),"functions":functions,"actions":p.actions.iter().map(|a|json!({"name":a.name,"gpu":false,"fallback_reason":"transactional state, domain errors and ordered event publication execute on the host"})).collect::<Vec<_>>(),"javascript":js.manifest,"cpu":"cpu/compiled_state.wasm","trust":"literal source closures, target emission, host adapters, runtimes and toolchains remain trusted; capability is not a proof or profitability claim"});
+    let mut manifest = json!({"schema":3,"runtime_abi":"ink-module-v1","core_sha256":module.identity()?,"core_semantics":module.semantics(),"functions":functions,"actions":p.actions.iter().map(|a|json!({"name":a.name,"gpu":false,"fallback_reason":"transactional state, domain errors and ordered event publication execute on the host"})).collect::<Vec<_>>(),"javascript":js.manifest,"cpu":"cpu/compiled_state.wasm","trust":"literal source closures, target emission, host adapters, runtimes and toolchains remain trusted; capability is not a proof or profitability claim"});
+    if let Some(selected) = selected {
+        manifest["selection"] =
+            serde_json::to_value(selected.evidence()).map_err(|e| e.to_string())?;
+    }
     super::put(
         dir,
         "manifest.json",
