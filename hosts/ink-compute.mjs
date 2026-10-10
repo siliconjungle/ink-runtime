@@ -62,8 +62,10 @@ function pack(v, t) {
         words.push(v >>> 0);
         break;
       case "u64": {
-        if (typeof v === "number" && !Number.isSafeInteger(v))
-          fail("u64 above safe JSON number range requires decimal string");
+        if (!(typeof v === "bigint" ||
+              (typeof v === "number" && Number.isSafeInteger(v)) ||
+              (typeof v === "string" && /^(0|[1-9][0-9]{0,19})$/.test(v))))
+          fail("u64 requires BigInt, exact safe Number or decimal string");
         let n;
         try {
           n = BigInt(v);
