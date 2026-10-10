@@ -14,7 +14,7 @@ function unpack(text) {
     if(v===null||typeof v==='string'||typeof v==='boolean')return v;
     if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length!==1)throw Error('Invalid receipt value');
     if(typeof v.b==='string'&&/^-?(0|[1-9][0-9]*)$/.test(v.b))return BigInt(v.b);
-    if(typeof v.n==='string'&&Number.isFinite(Number(v.n))&&(v.n==='-0'||String(Number(v.n))===v.n))return Number(v.n);
+    if(typeof v.n==='string'&&Number.isFinite(Number(v.n))&&/^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(v.n))return Number(v.n);
     if(Array.isArray(v.a))return v.a.map(x=>decode(x,depth+1));
     if(Array.isArray(v.o)){
       const result={};

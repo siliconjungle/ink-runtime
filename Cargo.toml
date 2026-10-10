@@ -9,5 +9,5 @@ ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev 
 ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "1e587d49a7e5a2793213ca0b228f8bf5ef9d3194" }
 ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "e81fcd28ccb7626b62c79b9f8261d8e3af8d214c" }
 ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "c15d7050a06da93558018c4fdea0d82dac313dd1" }
-serde_json = "1"
+serde_json = { version="1", features=["float_roundtrip"] }
 sha2 = "0.10"

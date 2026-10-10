@@ -209,6 +209,7 @@ pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {
     Ok(())
 }
 
+pub mod durable;
 pub mod execution;
 pub mod module;
 pub mod toolchain;
@@ -243,6 +244,8 @@ pub fn emit_c_program(module: &core::CheckedModule, dir: &Path) -> LangResult<()
     runtime.push_str("\n}\n");
     runtime.push_str(include_str!("../hosts/value-abi.rs"));
     runtime.push_str(STATE_WASM_ABI);
+    runtime.push_str(include_str!("../hosts/durable-native-adapter.rs"));
+    put(dir, "src/durable.rs", include_str!("durable.rs"))?;
     put(dir, "src/lib.rs", runtime)?;
     put(dir, "src/main.rs", include_str!("../hosts/value-main.rs"))?;
     put(dir, "build.rs", include_str!("../hosts/value-build.rs"))?;
@@ -256,6 +259,8 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
     let mut code = code.to_owned();
     code.push_str(STATE_WASM_ABI);
+    code.push_str(include_str!("../hosts/durable-native-adapter.rs"));
+    put(dir, "src/durable.rs", include_str!("durable.rs"))?;
     put(dir, "src/lib.rs", code)?;
     put(dir, "src/main.rs", include_str!("../hosts/value-main.rs"))?;
     put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[workspace]\n")?;

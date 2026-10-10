@@ -39,9 +39,12 @@ receipts over generated JavaScript or the complete C/Rust Wasm ABI. Storage
 adapters are Node's atomic synced file replacement (`durable-file.mjs`, one
 writer process) and IndexedDB (transactional compare-and-replace). Ordered
 outbox delivery is at least once; receivers deduplicate event coordinates.
-An uncertain write requires reopening before further execution. Complete
-snapshots are copied per call; this is a durability baseline, not a performance
-claim or native executable embedding. See the distribution's
+An uncertain write requires reopening before further execution.
+`durable::{CompiledState, Host, Store, FileStore}` supplies native embedding;
+complete C/Rust projects include this host and their runner accepts
+`SCRIPT.json --durable FILE`. Native receipts and outbox acknowledgements survive
+process death after publication but before reply. Complete snapshots are copied
+per call; this is a durability baseline, not a performance claim. See the distribution's
 [durable host contract](https://github.com/siliconjungle/ink-lang/blob/main/docs/durable-host.md).
 
 Run `node --test tests/durable-state.mjs` for failure-injection and file checks.
