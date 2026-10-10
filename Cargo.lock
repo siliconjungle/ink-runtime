@@ -96,7 +96,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=95a70ddf0a70feeab2721ab2d22d65ca70936fb9#95a70ddf0a70feeab2721ab2d22d65ca70936fb9"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=601ca1261b4dae77849ab9161aa1685c66342d65#601ca1261b4dae77849ab9161aa1685c66342d65"
 dependencies = [
  "ink-core",
  "serde_json",
