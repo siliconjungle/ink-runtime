@@ -1,0 +1,12 @@
+[package]
+name = "ink-runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[dependencies]
+ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "f688079b78dcd740a42cf1655fec9629c862bf69" }
+ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "be4d1aab5045e4a39d9fd1777883693c6dcec2e8" }
+ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "6c40d9f4aa857aa56f2df4636c8595f7e5ecdd20" }
+ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "ae9f95fe7f050e5ff7f7d0005921946f25a7ff99" }
+serde_json = "1"
+sha2 = "0.10"
