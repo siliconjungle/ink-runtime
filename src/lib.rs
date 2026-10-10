@@ -46,10 +46,17 @@ pub fn emit_selected(
     selected: &ink_core::optimisation::CheckedSelection,
     dir: &Path,
 ) -> LangResult<()> {
-    emit_gpu(selected.module().pure_program()?, dir)
+    match assemble(selected.module(), dir, None) {
+        Ok(()) => Ok(()),
+        Err(_) => module::emit_selected(selected, dir),
+    }
 }
 pub fn emit_gpu(p: &Program, dir: &Path) -> LangResult<()> {
-    assemble(&core::CheckedModule::from_source(p.clone())?, dir, None)
+    let checked = core::CheckedModule::from_source(p.clone())?;
+    match assemble(&checked, dir, None) {
+        Ok(()) => Ok(()),
+        Err(_) => module::emit(&checked, dir),
+    }
 }
 pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path) -> LangResult<()> {
     if uses_packed_compute(route.module().pure_program()?) {
@@ -209,7 +216,99 @@ fn assemble(
 pub const STATE_WASM_ABI: &str = include_str!("../hosts/state-wasm-support.rs");
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
+pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {
+    put(
+        dir,
+        "durable-state.mjs",
+        include_str!("../hosts/durable-state.mjs"),
+    )?;
+    put(
+        dir,
+        "durable-file.mjs",
+        include_str!("../hosts/durable-file.mjs"),
+    )?;
+    Ok(())
+}
+
+pub const NATIVE_STATE_ADAPTER: &str = include_str!("../hosts/durable-native-adapter.rs");
+/// Shared native host implementation for complete and specialised state projects.
+pub fn emit_native_state_host(dir: &Path) -> LangResult<()> {
+    fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+    put(dir, "src/durable.rs", include_str!("durable.rs"))?;
+    put(dir, "src/state-cli.rs", NATIVE_STATE_CLI)
+}
+
+pub mod durable;
 pub mod execution;
+pub mod module;
 pub mod toolchain;
 
+const NATIVE_STATE_CLI: &str = include_str!("../hosts/native/state-cli.rs");
+
 pub const STATE_RUNNER: &str = include_str!("../hosts/native/state-main.rs");
+pub const COMPLETE_STATE_RUNNER: &str = include_str!("../hosts/value-main.rs");
+
+/// Assemble a complete literal C program and its shared primitive runtime.
+/// C functions/branches/loops execute the program; Rust supplies exact values,
+/// storage and portable codecs through an explicit C ABI, without an evaluator.
+pub fn emit_c_program(module: &core::CheckedModule, dir: &Path) -> LangResult<()> {
+    emit_c_artifact(ink_lowering_c::complete::lower(module)?, dir)
+}
+pub fn emit_c_program_selected(
+    selected: &ink_core::optimisation::CheckedSelection,
+    dir: &Path,
+) -> LangResult<()> {
+    emit_c_artifact(ink_lowering_c::complete::lower_selected(selected)?, dir)
+}
+fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> LangResult<()> {
+    fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+    put(dir, "program.c", emission.c)?;
+    put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
+    put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
+    emit_durable_hosts(dir)?;
+    put(
+        dir,
+        "manifest.json",
+        serde_json::to_vec_pretty(&emission.metadata).map_err(|e| e.to_string())?,
+    )?;
+    put(
+        dir,
+        "src/metadata.json",
+        serde_json::to_vec_pretty(&emission.metadata).map_err(|e| e.to_string())?,
+    )?;
+    let mut runtime = String::from("#![allow(dead_code)]\nmod portable {\n");
+    runtime.push_str(ink_core::SNAPSHOT_WIRE_RUST_SOURCE);
+    runtime.push_str("\n}\npub use portable::Limits as SnapshotLimits;\n");
+    runtime.push_str("mod transaction {\n");
+    runtime.push_str(ink_core::TRANSACTION_RUST_SOURCE);
+    runtime.push_str("\n}\n");
+    runtime.push_str("mod temporary {\n");
+    runtime.push_str(ink_core::TEMPORARY_RUST_SOURCE);
+    runtime.push_str("\n}\nuse temporary::{OwnedBuffer,OwnedMap};\n");
+    runtime.push_str(include_str!("../hosts/value-abi.rs"));
+    runtime.push_str(STATE_WASM_ABI);
+    runtime.push_str(NATIVE_STATE_ADAPTER);
+    emit_native_state_host(dir)?;
+    put(dir, "src/lib.rs", runtime)?;
+    put(dir, "src/main.rs", COMPLETE_STATE_RUNNER)?;
+    put(dir, "build.rs", include_str!("../hosts/value-build.rs"))?;
+    put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n")?;
+    Ok(())
+}
+
+/// Assemble caller-supplied literal Rust emission without coupling the runtime
+/// package to the Rust emitter. The distribution owns that dependency.
+pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
+    fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+    let mut code = code.to_owned();
+    code.push_str(STATE_WASM_ABI);
+    code.push_str(NATIVE_STATE_ADAPTER);
+    emit_native_state_host(dir)?;
+    put(dir, "src/lib.rs", code)?;
+    put(dir, "src/main.rs", COMPLETE_STATE_RUNNER)?;
+    put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[workspace]\n")?;
+    put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
+    emit_durable_hosts(dir)?;
+    put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
+    Ok(())
+}

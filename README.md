@@ -22,8 +22,7 @@ reuse; later profiles measure warm execution. GPU preparation remains explicit.
 Unavailable/failed candidates retain the compiled CPU baseline. Profiling caches
 hold at most 32 shapes and recheck after 32 uses by default. Profile receipts are
 observations, not proofs. Native wgpu bundles continue to use their C CPU path.
-JavaScript stateful execution and per-stage adaptive JS/Wasm/GPU placement are
-not implemented by this browser selector.
+Mixed modules expose complete Wasm state execution and explicit JavaScript state instances. Stateful actions never enter speculative selection. Per-stage adaptive JS/Wasm/GPU placement remains future work.
 
 The JavaScript value ABI trusts the caller, like native compiled code: arguments
 must have the declared types and ranges, with U64 supplied as BigInt. Generated
@@ -68,3 +67,39 @@ resident stages, retaining dynamic lengths in list headers. No reduction
 reassociation or automatic stage fusion is introduced. Graph feedback and
 unsupported shapes retain CPU fallback. Actual dispatches, transfers and live
 buffers are reported separately from capability metadata.
+
+Run browser policy checks with `node --test tests/backend-selection.mjs`.
+
+`emit_c_program` and `emit_rust_program` assemble complete literal programs with
+primitive values, transaction publication, portable snapshot codecs and a shared
+native/Wasm handle/buffer ABI. C emission uses shared Rust primitives; generated
+programs contain no Ink parser or AST evaluator. `toolchain::complete_program`
+builds native executables or Wasm modules. `module` extracts GPU-eligible pure
+closures from mixed programs and retains persistent device/profile engines.
+The C header is `hosts/state-abi.h`; browser Wasm support is `hosts/state-wasm.mjs`.
+
+`hosts/durable-state.mjs` provides serialized durable calls and bounded retry
+receipts over generated JavaScript or the complete C/Rust Wasm ABI. Storage
+adapters are Node's atomic synced file replacement (`durable-file.mjs`, one
+writer process) and IndexedDB (transactional compare-and-replace). Ordered
+outbox delivery is at least once; receivers deduplicate event coordinates.
+An uncertain write requires reopening before further execution.
+`durable::{CompiledState, Host, Store, FileStore}` supplies native embedding;
+complete C/Rust projects and mixed native wgpu bundles share this host/CLI and accept
+`SCRIPT.json --durable FILE`. Native receipts and outbox acknowledgements survive
+process death after publication but before reply. Complete snapshots are copied
+per call; this is a durability baseline, not a performance claim. See the distribution's
+[durable host contract](https://github.com/siliconjungle/ink-lang/blob/main/docs/durable-host.md).
+
+Run `node --test tests/durable-state.mjs` for failure-injection and file checks.
+
+`emit_c_program_selected`, `emit_selected` and `module::emit_selected` keep the
+core's sealed selection witness during complete/native/Wasm and mixed-module
+assembly. Selected C and JavaScript state use `snapshot::selected_layout` from
+the core; Rust state code comes from its selected emitter. Baseline checkpoints
+and durable files remain usable by checked plans for the same source. Raw
+program emission keeps its own namespace, and no identity override is accepted.
+CLI `emit-state` uses `COMPLETE_STATE_RUNNER` and `emit_native_state_host`; the
+specialised `STATE_RUNNER` remains available for direct state-emitter harnesses.
+
+Mixed native bundles dispatch eligible pure calls independently of durable transactions. GPU calls do not publish state or retry receipts; poisoned hosts reject dispatch until reopened. Both native runners share `hosts/native/state-cli.rs`.

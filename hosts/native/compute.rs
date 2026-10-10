@@ -24,7 +24,12 @@ extern "C" {
         count: *mut usize,
     );
     fn ink_compute_reset();
-    fn ink_compute_into(f:u32,data:*const *const c_void,lengths:*const usize,destination:*mut c_void)->usize;
+    fn ink_compute_into(
+        f: u32,
+        data: *const *const c_void,
+        lengths: *const usize,
+        destination: *mut c_void,
+    ) -> usize;
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -324,8 +329,24 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
             };
             args.push(r);
         }
+        if let Some(limit) = f["gpu_max_elements"].as_u64() {
+            if args.iter().any(|a| a.count.unwrap_or(0) > limit as usize) {
+                reason.get_or_insert(
+                    "literal GPU collection work limit; compiled CPU fallback".into(),
+                );
+            }
+        }
         let count = if f["graph_required"].as_bool() == Some(true) {
-            Some(device::graph_capacity(&f["graph"], &args.iter().map(|a| a.count.unwrap_or(0)).collect::<Vec<_>>())?.1)
+            Some(
+                device::graph_capacity(
+                    &f["graph"],
+                    &args
+                        .iter()
+                        .map(|a| a.count.unwrap_or(0))
+                        .collect::<Vec<_>>(),
+                )?
+                .1,
+            )
         } else if f["shader"].is_string() {
             f["lengths"]
                 .as_array()
@@ -333,7 +354,7 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
                 .iter()
                 .map(|i| args[i.as_u64().unwrap() as usize].count)
                 .collect::<Option<Vec<_>>>()
-                .and_then(|a| a.into_iter().min())
+                .and_then(|a| a.into_iter().max())
         } else {
             reason.get_or_insert_with(|| {
                 f["fallback_reason"]
@@ -365,8 +386,13 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
         return Err("pipeline requires outputs".into());
     }
     let mut feedback = BTreeMap::new();
-    if v.get("feedback").and_then(Value::as_object).is_some_and(|f| !f.is_empty())
-        && steps.iter().any(|s| s.f["graph_required"].as_bool() == Some(true)) {
+    if v.get("feedback")
+        .and_then(Value::as_object)
+        .is_some_and(|f| !f.is_empty())
+        && steps
+            .iter()
+            .any(|s| s.f["graph_required"].as_bool() == Some(true))
+    {
         reason.get_or_insert("GPU stage graph feedback is unsupported".into());
     }
     if let Some(f) = v.get("feedback") {
@@ -389,18 +415,20 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
     }
     let bytes = constants
         .iter()
-        .map(|c| (c.words.len() * 4).max(4))
+        .map(|c| ((c.words.len() + 1) * 4).max(4))
         .sum::<usize>()
         + steps
             .iter()
             .map(|s| {
-                2 * (s.count.unwrap_or(0) * width(&s.f["result"]) * 4).max(4)
+                2 * ((1 + s.count.unwrap_or(0) * width(&s.f["result"])) * 4).max(4)
                     + 4 * (s.args.len() + 1)
             })
             .sum::<usize>()
         + outputs
             .iter()
-            .map(|i| (steps[*i].count.unwrap_or(0) * width(&steps[*i].f["result"]) * 4).max(4))
+            .map(|i| {
+                ((1 + steps[*i].count.unwrap_or(0) * width(&steps[*i].f["result"])) * 4).max(4)
+            })
             .sum::<usize>();
     if bytes > MAX_BYTES {
         reason.get_or_insert("GPU live-buffer budget exceeds 256 MiB".into());
@@ -538,9 +566,15 @@ impl Engine {
     /// eight bytes, writable and disjoint from every reachable input. No other
     /// arena-backed result may remain live across this call. Returned count is
     /// in 32-bit words. Caller storage remains valid after scratch is reset.
-    pub unsafe fn call_packed_into(&mut self, index:u32, data:&[*const c_void], lengths:&[usize], destination:*mut u32)->usize {
+    pub unsafe fn call_packed_into(
+        &mut self,
+        index: u32,
+        data: &[*const c_void],
+        lengths: &[usize],
+        destination: *mut u32,
+    ) -> usize {
         ink_compute_reset();
-        let count=ink_compute_into(index,data.as_ptr(),lengths.as_ptr(),destination.cast());
+        let count = ink_compute_into(index, data.as_ptr(), lengths.as_ptr(), destination.cast());
         ink_compute_reset();
         count
     }

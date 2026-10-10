@@ -191,9 +191,10 @@ function compilePlan(plan, functions, native = false) {
     const graphShape = f.graph_required
       ? deviceLowering.graphCapacity(f.graph,args.map(a=>a.count ?? 0)) : null;
     const count = graphShape ? graphShape.outputCount : f.shader
-      ? Math.min(...f.lengths.map((i) => args[i].count ?? 0))
+      ? Math.max(...f.lengths.map((i) => args[i].count ?? 0))
       : null;
     if (!f.shader && !f.graph_required) reason ??= f.fallback_reason ?? "CPU-only function";
+    if(!f.graph_required && f.gpu_max_elements && args.some(a=>(a.count??0)>f.gpu_max_elements))reason??="literal GPU collection work limit; compiled CPU fallback";
     ids.set(step.id, steps.length);
     steps.push({ id: step.id, f, args, count, graphShape });
   }
@@ -221,7 +222,7 @@ function compilePlan(plan, functions, native = false) {
   if (constants.some((c) => !c.finite))
     reason ??= "non-finite f32 inputs require CPU";
   let bytes = native ? 0 : constants.reduce(
-    (n, c) => n + Math.max(4, c.words.byteLength),
+    (n, c) => n + Math.max(4, c.words.byteLength+(c.type.kind==="list"?4:0)),
     0,
   );
   bytes += steps.reduce(
@@ -229,7 +230,7 @@ function compilePlan(plan, functions, native = false) {
       n +
       (s.graphShape
         ? s.graphShape.capacities.reduce((bytes,n,i)=>bytes+Math.max(4,n*width(s.f.graph.nodes[i].result)*4)+(s.f.graph.nodes[i].result.kind === 'list' ? 4 : 0),0)
-        : 2 * Math.max(4, (s.count ?? 0) * width(s.f.result) * 4)) +
+        : 2 * Math.max(4, (1+(s.count ?? 0) * width(s.f.result)) * 4)) +
       4 * (s.args.length + 1),
     0,
   );
@@ -238,8 +239,8 @@ function compilePlan(plan, functions, native = false) {
       n +
       Math.max(
         4,
-        (steps[ids.get(id)].count ?? 0) *
-          width(steps[ids.get(id)].f.result) *
+        (1+(steps[ids.get(id)].count ?? 0) *
+          width(steps[ids.get(id)].f.result)) *
           4,
       ),
     0,
