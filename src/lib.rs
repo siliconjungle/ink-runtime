@@ -312,3 +312,5 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
     Ok(())
 }
+
+pub mod representation;
