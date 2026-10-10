@@ -93,6 +93,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ink-lowering-js"
+version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=ffb842410a8d5b81fe0ff733637501e5ac79d1bd#ffb842410a8d5b81fe0ff733637501e5ac79d1bd"
+dependencies = [
+ "ink-core",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
 source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=ae9f95fe7f050e5ff7f7d0005921946f25a7ff99#ae9f95fe7f050e5ff7f7d0005921946f25a7ff99"
@@ -108,6 +118,7 @@ dependencies = [
  "ink-core",
  "ink-lowering-c",
  "ink-lowering-gpu",
+ "ink-lowering-js",
  "ink-lowering-wasm",
  "serde_json",
  "sha2",

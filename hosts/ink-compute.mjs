@@ -1,4 +1,5 @@
 import {createDevice} from "./ink-device.mjs";
+import {createSelector} from "./backend-selection.mjs";
 // Version 2: packed logical values, compiled CPU fallback, resident GPU pipelines.
 const MAX_BYTES = 256 * 1024 * 1024,
   MAX_STEPS = 64,
@@ -277,23 +278,27 @@ function compilePlan(plan, manifest) {
     bytes,
   };
 }
-const median = (a) => a.sort((a, b) => a - b)[1];
 export async function loadInk(
   base,
-  { gpu = true, backend: defaultBackend = "auto" } = {},
+  { gpu = true, backend: defaultBackend = "auto", expectedCalls=32, recheckEvery=32 } = {},
 ) {
   const root = new URL(base, globalThis.location?.href ?? "http://localhost/");
   if (!root.pathname.endsWith("/")) root.pathname += "/";
   const manifest = await (await fetch(new URL("manifest.json", root))).json();
   if (manifest.schema !== 2) fail("expected schema 2 compute bundle");
+  const cpuStart=performance.now();
   const wasm = await WebAssembly.instantiate(
     await (await fetch(new URL("cpu.wasm", root))).arrayBuffer(),
     {},
   );
   const cpu = wasm.instance.exports;
+  const cpuStartup=performance.now()-cpuStart;
   let tail=Promise.resolve();
-  const profiles=new Map();
-  const adapter=createDevice({root, enabled:gpu, onLost:()=>profiles.clear(),fail,width,unpack,MAX_BYTES});
+  const selector=createSelector({expectedCalls,recheckEvery});
+  const jsStart=performance.now();
+  const javascript=await import(new URL("program.mjs",root));
+  const jsStartup=performance.now()-jsStart;
+  const adapter=createDevice({root, enabled:gpu, onLost:()=>selector.clear(),fail,width,unpack,MAX_BYTES});
   function cpuCall(f, args) {
     cpu.ink_compute_reset();
     try {
@@ -357,89 +362,25 @@ export async function loadInk(
       counters: { upload_bytes: 0, readback_bytes: 0, dispatches: 0 },
     };
   }
-  async function execute(plan, { backend = defaultBackend } = {}) {
-    if (!["auto", "cpu", "gpu"].includes(backend))
-      fail("backend must be auto, cpu or gpu");
-    const p = plan;
-    if (backend === "cpu" || p.reason)
-      return {
-        ...runCpu(p),
-        backend: "cpu",
-        reason: backend === "cpu" ? "explicit CPU selection" : p.reason,
-      };
-    let key = JSON.stringify([
-      p.steps.map((s) => [
-        s.f.index,
-        s.args.map((a) => [a.kind, a.index, a.count]),
-      ]),
-      p.iterations,
-      [...p.feedback],
-      p.outputs,
-      p.constants.map((c) => [
-        c.type,
-        c.count,
-        Array.from(c.words.subarray(0, 8)),
-      ]),
-    ]);
-    let setup = performance.now();
-    try {
-      await adapter.prepare(p);
-      setup = performance.now() - setup;
-      if (backend === "gpu")
-        return {
-          ...(await adapter.run(p)),
-          backend: "gpu",
-          reason: "explicit GPU selection",
-        };
-      let profile = profiles.get(key);
-      if (!profile || profile.uses >= 32) {
-        const ct = [],
-          gt = [];
-        for (let trial = 0; trial < 3; trial++) {
-          const c = () => {
-            const t = performance.now();
-            runCpu(p);
-            ct.push(performance.now() - t);
-          };
-          const g = async () => {
-            const t = performance.now();
-            await adapter.run(p);
-            gt.push(performance.now() - t);
-          };
-          if (trial % 2) {
-            await g();
-            c();
-          } else {
-            c();
-            await g();
-          }
-        }
-        profile = {
-          cpu_ms: median(ct),
-          gpu_ms: median(gt),
-          setup_ms: setup,
-          uses: 0,
-        };
-        profile.gpu = profile.gpu_ms + setup / 32 < profile.cpu_ms * 0.9;
-        if (profiles.size >= 32) profiles.delete(profiles.keys().next().value);
-        profiles.set(key, profile);
+  function runJavascript(p) {
+    const inputs=new Map(p.inputs),values=[];
+    for(let iteration=0;iteration<p.iterations;iteration++) {
+      for(let i=0;i<p.steps.length;i++) {
+        const s=p.steps[i];
+        const resolve=a=>a.kind==='constant'?p.constants[a.index]:a.kind==='value'?a.value:values[a.index];
+        const args=s.args.map(a=>a.input?resolve(inputs.get(a.input)):resolve(a));
+        values[i]=pack(javascript.call(s.f.name,args.map(a=>unpack(a.words,a.type))),s.f.result);
       }
-      profile.uses++;
-      return {
-        ...(profile.gpu ? await adapter.run(p) : runCpu(p)),
-        backend: profile.gpu ? "gpu" : "cpu",
-        reason:
-          "measured whole pipeline including transfers; setup amortised over 32 uses, 10% minimum saving",
-        profile: { ...profile },
-      };
-    } catch (e) {
-      profiles.delete(key);
-      return {
-        ...runCpu(p),
-        backend: "cpu",
-        reason: `GPU fallback: ${e.message ?? e}`,
-      };
+      for(const [input,stage] of p.feedback)inputs.set(input,{kind:'value',value:values[stage]});
     }
+    return {values:Object.fromEntries(p.outputs.map(id=>{const a=values[p.ids.get(id)];return [id,unpack(a.words,a.type)];})),counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
+  }
+  async function execute(p, { backend = defaultBackend } = {}) {
+    const key=JSON.stringify([manifest.core_sha256,p.steps.map(s=>[s.f.index,s.args.map(a=>[a.kind,a.index,a.count])]),p.iterations,[...p.feedback],p.outputs,p.constants.map(c=>[c.type,c.count,Array.from(c.words.subarray(0,8))])]);
+    const candidates=[{name:'cpu',startupMs:cpuStartup,run:()=>runCpu(p)},{name:'javascript',startupMs:jsStartup,run:()=>runJavascript(p)}];
+    if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:()=>adapter.prepare(p),run:()=>adapter.run(p)});
+    const outcome=await selector.run(key,candidates,backend);
+    return {...outcome.result,backend:outcome.backend,reason:outcome.reason,profile:outcome.profile};
   }
   function serial(fn) {
     const task = tail.then(fn);
@@ -466,7 +407,7 @@ export async function loadInk(
     dispose: () =>
       serial(() => {
         adapter.close();
-        profiles.clear();
+        selector.clear();
       }),
   };
   runtime.run = runtime.call;

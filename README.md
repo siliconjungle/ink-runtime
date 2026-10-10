@@ -11,3 +11,18 @@ Shared execution orchestration for [Ink](https://github.com/siliconjungle/ink-la
 `toolchain::wasm` invokes the Wasm target configuration from `ink-lowering-wasm`. The Wasm state host adapter also lives here; Rust/LLVM remains the state target compiler. Runtime scheduling never grants proof authority, and measured profitability is not a mathematical premise.
 
 The Ink distribution pins this repository and tests integrated lowering/execution. Standalone `cargo test` also checks backend-neutral composition and pure fallback.
+
+Browser bundles also include literal `program.mjs` emission from the pinned
+`ink-lowering-js` package. Both scalar calls and packed pipelines accept explicit
+`javascript`, `cpu` (Wasm), `gpu` or `auto` selection. `backend-selection.mjs`
+compares eligible pure candidates with bounded, alternating measurements of
+whole execution, including conversions, transfers and result materialisation.
+Initial JavaScript/Wasm module setup is charged once and amortised over expected
+reuse; later profiles measure warm execution. GPU preparation remains explicit.
+Unavailable/failed candidates retain the compiled CPU baseline. Profiling caches
+hold at most 32 shapes and recheck after 32 uses by default. Profile receipts are
+observations, not proofs. Native wgpu bundles continue to use their C CPU path.
+JavaScript stateful execution and per-stage adaptive JS/Wasm/GPU placement are
+not implemented by this browser selector.
+
+Run browser policy checks with `node --test tests/backend-selection.mjs`.

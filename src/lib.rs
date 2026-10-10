@@ -72,7 +72,9 @@ fn assemble(
     } else {
         scalar_cpu(p)?
     };
+    let javascript = ink_lowering_js::lower(checked)?;
     let mut emitted = ink_lowering_gpu::gpu::lower(checked)?;
+    emitted.manifest["javascript"] = javascript.manifest.clone();
     emitted.manifest["cpu_c_sha256"] = json!(format!("{:x}", Sha256::digest(c.as_bytes())));
     emitted.manifest["runtime_abi"] = json!(if compute {
         "ink-packed-pipeline-v2"
@@ -82,6 +84,12 @@ fn assemble(
     fs::create_dir_all(dir.join("native/src")).map_err(|e| e.to_string())?;
     let manifest = serde_json::to_string_pretty(&emitted.manifest).map_err(|e| e.to_string())?;
     put(dir, "manifest.json", &manifest)?;
+    put(dir, "program.mjs", &javascript.javascript)?;
+    put(
+        dir,
+        "backend-selection.mjs",
+        include_str!("../hosts/backend-selection.mjs"),
+    )?;
     put(dir, "cpu.c", &c)?;
     put(dir, "native/cpu.c", &c)?;
     put(
