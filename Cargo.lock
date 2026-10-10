@@ -65,7 +65,7 @@ dependencies = [
 [[package]]
 name = "ink-core"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lang?rev=17bef6c455fd60feb295f8216136145e68948598#17bef6c455fd60feb295f8216136145e68948598"
+source = "git+https://github.com/siliconjungle/ink-lang?rev=3076360a595086a7b857d24a7287fa3f87addb51#3076360a595086a7b857d24a7287fa3f87addb51"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -77,7 +77,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=1a6ffb419a4093a6f210e0f8b686749b66857fa9#1a6ffb419a4093a6f210e0f8b686749b66857fa9"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=8813eda4514339f38ba0665b3afabc1198071efb#8813eda4514339f38ba0665b3afabc1198071efb"
 dependencies = [
  "ink-core",
  "serde_json",
@@ -86,7 +86,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=271133d6f43c5e4cbc62e4417dfa241ca12c98c0#271133d6f43c5e4cbc62e4417dfa241ca12c98c0"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=45857d9489b9e8f168f75732783e5841a1e7bbe7#45857d9489b9e8f168f75732783e5841a1e7bbe7"
 dependencies = [
  "ink-core",
  "serde_json",
@@ -96,7 +96,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=3284c5670b3e57fd49299c00a840adde093434ab#3284c5670b3e57fd49299c00a840adde093434ab"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=95a70ddf0a70feeab2721ab2d22d65ca70936fb9#95a70ddf0a70feeab2721ab2d22d65ca70936fb9"
 dependencies = [
  "ink-core",
  "serde_json",
@@ -106,7 +106,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=c81f978ee70c932021ec1cec07d01b006b13fc93#c81f978ee70c932021ec1cec07d01b006b13fc93"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=240e284c3bfdd7f1a40a2ad2c1b746e3eee8e0d5#240e284c3bfdd7f1a40a2ad2c1b746e3eee8e0d5"
 dependencies = [
  "ink-core",
  "ink-lowering-c",
