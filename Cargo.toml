@@ -8,6 +8,6 @@ ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "7fdb9d0af
 ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "6a38df2f3507905e3206eeb83660edbb0857c556" }
 ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "8284ac56ea28e6c86e4b3141a5eb4bb4b7233aaa" }
 ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "23422a8b2b80ff96f4dcd2b5667e8083f48b4a91" }
-ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "1ee1c816c928a137eef2bee435e7e409b0e3ee36" }
+ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "a9fea11655c307b548caa0c59f83f78baeaa9c14" }
 serde_json = { version="1", features=["float_roundtrip"] }
 sha2 = "0.10"
