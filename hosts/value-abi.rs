@@ -20,6 +20,8 @@ enum V {
     Result(bool, Box<V>),
     List(Vec<V>),
     Vector(Vec<V>),
+    Buffer(OwnedBuffer<V>),
+    Map(OwnedMap<V,V>),
 }
 impl V {
     fn weight(&self) -> usize {
@@ -34,6 +36,7 @@ impl V {
     }
     fn json(&self) -> Json {
         match self {
+            Self::Buffer(_) | Self::Map(_) => Json::Null,
             Self::Unit => Json::Null,
             Self::Bool(v) => json!(v),
             Self::U32(v) => json!(v),
@@ -329,6 +332,36 @@ impl InkContext {
         }
     }
     fn primitive(&mut self, op: &str, a: &mut [V]) -> R<V> {
+        if op=="list_length" {let V::List(xs)=&a[0] else{return Err("list length".into())};return Ok(V::U32(xs.len().try_into().map_err(|_|"list exceeds u32")?));}
+        if op=="buffer_empty" {return Ok(V::Buffer(OwnedBuffer::new(vec![])));}
+        if op=="map_empty" {return Ok(V::Map(OwnedMap::new()));}
+        if op=="buffer_new" {let V::List(xs)=std::mem::replace(&mut a[0],V::Unit) else{return Err("buffer list".into())};return Ok(V::Buffer(OwnedBuffer::new(xs)));}
+        if op=="buffer_fill" {
+            let V::U32(n)=a[0] else{return Err("buffer length".into())};if n>1000000{return Err("temporary allocation limit exceeded".into())};
+            let weight=(n as usize).checked_mul(a[1].weight()).ok_or("temporary allocation limit exceeded")?;
+            if weight>64*1024*1024-self.arena_bytes{return Err("temporary allocation limit exceeded".into())};self.arena_bytes+=weight;
+            return Ok(V::Buffer(OwnedBuffer::new(vec![a[1].clone();n as usize])));
+        }
+        if let Some(method)=op.strip_prefix("buffer_") {
+            let V::Buffer(b)=a[0].clone() else{return Err("buffer receiver".into())};
+            let index=|v:&V|->R<u32>{if let V::U32(x)=v{Ok(*x)}else{Err("buffer index".into())}};
+            return Ok(match method {
+                "len"=>V::U32(b.len()),"freeze"=>V::List(b.freeze()),"pop"=>V::Buffer(b.pop()),
+                "contains"=>V::Bool(index(&a[1])?<b.len()),"get"=>b.get(index(&a[1])?).ok_or("buffer index outside bounds")?,
+                "set"=>V::Buffer(b.set(index(&a[1])?,a[2].clone())),"swap"=>V::Buffer(b.swap(index(&a[1])?,index(&a[2])?)),
+                "push"=>{if b.len()>=1000000{return Err("temporary allocation limit exceeded".into())};let weight=a[1].weight();if weight>64*1024*1024-self.arena_bytes{return Err("temporary allocation limit exceeded".into())};self.arena_bytes+=weight;V::Buffer(b.push(a[1].clone()))},
+                "truncate"=>V::Buffer(b.truncate(index(&a[1])?)),_=>return Err("buffer method".into())
+            });
+        }
+        if let Some(method)=op.strip_prefix("map_") {
+            let V::Map(m)=a[0].clone() else{return Err("map receiver".into())};
+            return Ok(match method {
+                "len"=>V::U32(m.len()),"keys"=>V::List(m.keys()),"values"=>V::List(m.values()),
+                "contains"=>V::Bool(m.contains(&a[1])),"get"=>m.get(&a[1]).ok_or("missing map key")?,
+                "set"=>{let weight=a[1].weight()+a[2].weight();if weight>64*1024*1024-self.arena_bytes{return Err("temporary allocation limit exceeded".into())};self.arena_bytes+=weight;V::Map(m.set(a[1].clone(),a[2].clone()))},
+                "remove"=>V::Map(m.remove(&a[1])),_=>return Err("map method".into())
+            });
+        }
         if let Some(name) = op.strip_prefix("record:") {
             let fs = self.meta["records"][name]
                 .as_array()
@@ -772,6 +805,7 @@ impl State {
             .find(|(_, d)| d["name"] == name)
             .ok_or_else(|| format!("unknown {section} {name}"))?;
         let d = d.clone();
+        if kind==0 && d["internal"].as_bool()==Some(true) {return Err("temporary storage is internal to a pure invocation".into());}
         let args = args.as_array().ok_or("expected argument array")?;
         let params = d["params"].as_array().ok_or("compiled parameters")?;
         if args.len() != params.len() {
