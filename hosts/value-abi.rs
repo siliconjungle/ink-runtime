@@ -430,6 +430,7 @@ impl InkContext {
             "Int" => V::Int(match &a[0] {
                 V::U32(n) => BigInt::from(*n),
                 V::U64(n) => BigInt::from(*n),
+                V::I32(n) => BigInt::from(*n),
                 V::Int(n) => n.clone(),
                 _ => return Err("expected integer".into()),
             }),
@@ -475,6 +476,12 @@ impl InkContext {
             }
             "checked_add" | "checked_sub" | "checked_mul" => {
                 let value = match (&a[0], &a[1]) {
+                    (V::I32(x), V::I32(y)) => match op {
+                        "checked_add" => x.checked_add(*y),
+                        "checked_sub" => x.checked_sub(*y),
+                        _ => x.checked_mul(*y),
+                    }
+                    .map(V::I32),
                     (V::U32(x), V::U32(y)) => match op {
                         "checked_add" => x.checked_add(*y),
                         "checked_sub" => x.checked_sub(*y),
@@ -985,6 +992,8 @@ fn snapshot_schema(t: &Json, meta: &Json) -> R<portable::Schema> {
             "Bool" => S::Bool,
             "U32" => S::U32,
             "U64" => S::U64,
+            "I32" => S::I32,
+            "F32" => S::F32,
             "Int" => S::Int,
             "String" => S::String,
             _ => return Err("unsupported state schema".into()),
@@ -996,6 +1005,11 @@ fn snapshot_schema(t: &Json, meta: &Json) -> R<portable::Schema> {
             .ok_or("schema")?;
         match kind.as_str() {
             "List" => S::List(Box::new(snapshot_schema(v, meta)?)),
+            "Vector" => S::Vector(
+                Box::new(snapshot_schema(&v[0], meta)?),
+                u8::try_from(v[1].as_u64().ok_or("vector dimension")?)
+                    .map_err(|_| "vector dimension")?,
+            ),
             "Option" => S::Option(Box::new(snapshot_schema(v, meta)?)),
             "Result" => S::Result(
                 Box::new(snapshot_schema(&v[0], meta)?),
