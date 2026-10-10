@@ -19,6 +19,39 @@ pub trait Executor {
         function: &str,
         args: Vec<Term>,
     ) -> LangResult<Term>;
+    /// Execute once and project both outputs. Native backends may keep the
+    /// intermediate in their typed ABI rather than serialising it twice.
+    fn transition(
+        &self,
+        checked: &CheckedRepresentation,
+        action: &str,
+        args: Vec<Term>,
+    ) -> LangResult<(Term, Term)> {
+        let candidate = checked
+            .plan()
+            .actions
+            .get(action)
+            .ok_or("unknown representation action")?;
+        let executed = self.execute(
+            checked.definition(),
+            checked.context(),
+            &candidate.execute,
+            args,
+        )?;
+        let observed = self.execute(
+            checked.definition(),
+            checked.context(),
+            &candidate.observe,
+            vec![executed.clone()],
+        )?;
+        let next = self.execute(
+            checked.definition(),
+            checked.context(),
+            &candidate.next,
+            vec![executed],
+        )?;
+        Ok((observed, next))
+    }
 }
 pub struct Reference;
 impl Executor for Reference {
@@ -43,6 +76,9 @@ impl Executor for Reference {
 }
 pub struct Session<E: Executor> {
     checked: CheckedRepresentation,
+    // Exact source identity and transport schema do not change when a physical
+    // representation changes. Avoid rebuilding/hashing them on every call.
+    layout: snapshot_wire::Layout,
     physical: Term,
     version: u64,
     outbox: Vec<snapshot_wire::Event>,
@@ -69,6 +105,7 @@ impl<E: Executor> Session<E> {
         )?;
         Ok(Self {
             checked,
+            layout,
             physical,
             version: logical.version,
             outbox: logical.outbox,
@@ -92,11 +129,7 @@ impl<E: Executor> Session<E> {
             tables: codec::tables(&self.checked, &state)?,
             outbox: self.outbox.clone(),
         };
-        snapshot_wire::encode(
-            &ink_core::snapshot::layout(self.checked.module().program())?,
-            &logical,
-            Limits::default(),
-        )
+        snapshot_wire::encode(&self.layout, &logical, Limits::default())
     }
     pub fn acknowledge_through(&mut self, commit: u64, position: u64) {
         self.outbox
@@ -115,16 +148,13 @@ impl<E: Executor> Session<E> {
         if xs.len() != source.params.len() {
             return Err("action argument count mismatch".into());
         }
-        let candidate = &self.checked.plan().actions[name];
         let mut inputs = vec![self.physical.clone(), Term::U64(self.version)];
         for ((_, t), value) in source.params.iter().zip(xs) {
             inputs.push(codec::encode(&self.checked, t, value)?);
         }
         // Evaluate the proposal once. No authoritative mutation occurs until
         // all execution/decoding/transport checks have succeeded.
-        let executed = self.run(&candidate.execute, inputs)?;
-        let observed = self.run(&candidate.observe, vec![executed.clone()])?;
-        let next = self.run(&candidate.next, vec![executed])?;
+        let (observed, next) = self.executor.transition(&self.checked, name, inputs)?;
         let Term::Construct {
             datatype,
             constructor,
@@ -171,7 +201,7 @@ impl<E: Executor> Session<E> {
             return Err("invalid aborted/query observation".into());
         }
         snapshot_wire::encode(
-            &ink_core::snapshot::layout(self.checked.module().program())?,
+            &self.layout,
             &Logical {
                 version: *version,
                 tables,
