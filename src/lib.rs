@@ -264,6 +264,9 @@ fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> 
     runtime.push_str("mod transaction {\n");
     runtime.push_str(ink_core::TRANSACTION_RUST_SOURCE);
     runtime.push_str("\n}\n");
+    runtime.push_str("mod temporary {\n");
+    runtime.push_str(ink_core::TEMPORARY_RUST_SOURCE);
+    runtime.push_str("\n}\nuse temporary::{OwnedBuffer,OwnedMap};\n");
     runtime.push_str(include_str!("../hosts/value-abi.rs"));
     runtime.push_str(STATE_WASM_ABI);
     runtime.push_str(NATIVE_STATE_ADAPTER);
