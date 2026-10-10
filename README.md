@@ -22,7 +22,14 @@ reuse; later profiles measure warm execution. GPU preparation remains explicit.
 Unavailable/failed candidates retain the compiled CPU baseline. Profiling caches
 hold at most 32 shapes and recheck after 32 uses by default. Profile receipts are
 observations, not proofs. Native wgpu bundles continue to use their C CPU path.
-JavaScript stateful execution and per-stage adaptive JS/Wasm/GPU placement are
-not implemented by this browser selector.
+Mixed modules expose complete Wasm state execution and explicit JavaScript state instances. Stateful actions never enter speculative selection. Per-stage adaptive JS/Wasm/GPU placement remains future work.
 
 Run browser policy checks with `node --test tests/backend-selection.mjs`.
+
+`emit_c_program` and `emit_rust_program` assemble complete literal programs with
+primitive values, transaction publication, portable snapshot codecs and a shared
+native/Wasm handle/buffer ABI. C emission uses shared Rust primitives; generated
+programs contain no Ink parser or AST evaluator. `toolchain::complete_program`
+builds native executables or Wasm modules. `module` extracts GPU-eligible pure
+closures from mixed programs and retains persistent device/profile engines.
+The C header is `hosts/state-abi.h`; browser Wasm support is `hosts/state-wasm.mjs`.

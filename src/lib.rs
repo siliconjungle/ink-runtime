@@ -41,10 +41,14 @@ pub fn emit_selected(
     selected: &ink_core::optimisation::CheckedSelection,
     dir: &Path,
 ) -> LangResult<()> {
-    emit_gpu(selected.module().pure_program()?, dir)
+    emit_gpu(selected.module().program(), dir)
 }
 pub fn emit_gpu(p: &Program, dir: &Path) -> LangResult<()> {
-    assemble(&core::CheckedModule::from_source(p.clone())?, dir, None)
+    let checked = core::CheckedModule::from_source(p.clone())?;
+    match assemble(&checked, dir, None) {
+        Ok(()) => Ok(()),
+        Err(_) => module::emit(&checked, dir),
+    }
 }
 pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path) -> LangResult<()> {
     if ink_core::compute_values::needed(route.module().program()) {
@@ -192,6 +196,55 @@ pub const STATE_WASM_ABI: &str = include_str!("../hosts/state-wasm-support.rs");
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
 pub mod execution;
+pub mod module;
 pub mod toolchain;
 
 pub const STATE_RUNNER: &str = include_str!("../hosts/native/state-main.rs");
+
+/// Assemble a complete literal C program and its shared primitive runtime.
+/// C functions/branches/loops execute the program; Rust supplies exact values,
+/// storage and portable codecs through an explicit C ABI, without an evaluator.
+pub fn emit_c_program(module: &core::CheckedModule, dir: &Path) -> LangResult<()> {
+    let emission = ink_lowering_c::complete::lower(module)?;
+    fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+    put(dir, "program.c", emission.c)?;
+    put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
+    put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
+    put(
+        dir,
+        "manifest.json",
+        serde_json::to_vec_pretty(&emission.metadata).map_err(|e| e.to_string())?,
+    )?;
+    put(
+        dir,
+        "src/metadata.json",
+        serde_json::to_vec_pretty(&emission.metadata).map_err(|e| e.to_string())?,
+    )?;
+    let mut runtime = String::from("#![allow(dead_code)]\nmod portable {\n");
+    runtime.push_str(ink_core::SNAPSHOT_WIRE_RUST_SOURCE);
+    runtime.push_str("\n}\npub use portable::Limits as SnapshotLimits;\n");
+    runtime.push_str("mod transaction {\n");
+    runtime.push_str(ink_core::TRANSACTION_RUST_SOURCE);
+    runtime.push_str("\n}\n");
+    runtime.push_str(include_str!("../hosts/value-abi.rs"));
+    runtime.push_str(STATE_WASM_ABI);
+    put(dir, "src/lib.rs", runtime)?;
+    put(dir, "src/main.rs", include_str!("../hosts/value-main.rs"))?;
+    put(dir, "build.rs", include_str!("../hosts/value-build.rs"))?;
+    put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n")?;
+    Ok(())
+}
+
+/// Assemble caller-supplied literal Rust emission without coupling the runtime
+/// package to the Rust emitter. The distribution owns that dependency.
+pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
+    fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+    let mut code = code.to_owned();
+    code.push_str(STATE_WASM_ABI);
+    put(dir, "src/lib.rs", code)?;
+    put(dir, "src/main.rs", include_str!("../hosts/value-main.rs"))?;
+    put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[workspace]\n")?;
+    put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
+    put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
+    Ok(())
+}

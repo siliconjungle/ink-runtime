@@ -323,6 +323,13 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
             };
             args.push(r);
         }
+        if let Some(limit) = f["gpu_max_elements"].as_u64() {
+            if args.iter().any(|a| a.count.unwrap_or(0) > limit as usize) {
+                reason.get_or_insert(
+                    "literal GPU collection work limit; compiled CPU fallback".into(),
+                );
+            }
+        }
         let count = if f["shader"].is_string() {
             f["lengths"]
                 .as_array()
@@ -330,7 +337,7 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
                 .iter()
                 .map(|i| args[i.as_u64().unwrap() as usize].count)
                 .collect::<Option<Vec<_>>>()
-                .and_then(|a| a.into_iter().min())
+                .and_then(|a| a.into_iter().max())
         } else {
             reason.get_or_insert_with(|| {
                 f["fallback_reason"]
@@ -382,18 +389,20 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
     }
     let bytes = constants
         .iter()
-        .map(|c| (c.words.len() * 4).max(4))
+        .map(|c| ((c.words.len() + 1) * 4).max(4))
         .sum::<usize>()
         + steps
             .iter()
             .map(|s| {
-                2 * (s.count.unwrap_or(0) * width(&s.f["result"]) * 4).max(4)
+                2 * ((1 + s.count.unwrap_or(0) * width(&s.f["result"])) * 4).max(4)
                     + 4 * (s.args.len() + 1)
             })
             .sum::<usize>()
         + outputs
             .iter()
-            .map(|i| (steps[*i].count.unwrap_or(0) * width(&steps[*i].f["result"]) * 4).max(4))
+            .map(|i| {
+                ((1 + steps[*i].count.unwrap_or(0) * width(&steps[*i].f["result"])) * 4).max(4)
+            })
             .sum::<usize>();
     if bytes > MAX_BYTES {
         reason.get_or_insert("GPU live-buffer budget exceeds 256 MiB".into());

@@ -1,5 +1,4 @@
 // Appended verbatim to generated applications. This is a host ABI, not an optimiser.
-#[cfg(target_arch = "wasm32")]
 mod state_wasm {
     use super::*;
     use std::cell::RefCell;
@@ -104,12 +103,12 @@ mod state_wasm {
         })
     }
     #[no_mangle]
-    pub extern "C" fn lang_buffer_ptr(handle: u32) -> u32 {
+    pub extern "C" fn lang_buffer_ptr(handle: u32) -> usize {
         REGISTRY.with(|r| {
             let mut r = r.borrow_mut();
             match r.buffers.get(&handle) {
-                Some(bytes) => bytes.as_ptr() as u32,
-                None => r.fail("unknown buffer handle"),
+                Some(bytes) => bytes.as_ptr() as usize,
+                None => r.fail("unknown buffer handle") as usize,
             }
         })
     }
@@ -233,15 +232,17 @@ mod state_wasm {
                     return Err("ABI request exceeds 4 MiB".into());
                 }
                 let message: Json = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-                let name = message
-                    .get("call")
-                    .and_then(Json::as_str)
-                    .ok_or("request needs call")?;
+                let pure = message.get("pure").and_then(Json::as_str);
+                let name = pure
+                    .or_else(|| message.get("call").and_then(Json::as_str))
+                    .ok_or("request needs call or pure")?;
                 let args = message.get("args").ok_or("request needs args")?;
-                r.states
-                    .get_mut(&state)
-                    .ok_or("unknown state handle")?
-                    .invoke_json(name, args)
+                let state = r.states.get_mut(&state).ok_or("unknown state handle")?;
+                if pure.is_some() {
+                    state.call_json(name, args)
+                } else {
+                    state.invoke_json(name, args)
+                }
             })();
             let committed = result
                 .as_ref()

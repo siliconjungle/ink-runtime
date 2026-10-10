@@ -6,8 +6,9 @@ export function stringifyExactJSON(value) {
     if(value===null) return 'null';
     if(typeof value==='bigint') return value.toString();
     if(typeof value==='number') {
-      if(!Number.isSafeInteger(value)) throw new RangeError('Use BigInt for integers outside the safe Number range');
-      return String(value);
+      if(!Number.isFinite(value))throw new RangeError('JSON numbers must be finite');
+      if(Number.isInteger(value)&&!Number.isSafeInteger(value)){const s=String(value);return /[.eE]/.test(s)?s:s+'.0';} // float token: integer Wire readers reject it
+      return Object.is(value,-0)?'-0.0':String(value);
     }
     if(typeof value==='string'||typeof value==='boolean') return JSON.stringify(value);
     if(typeof value!=='object') throw new TypeError('Unsupported JSON value');
@@ -130,6 +131,12 @@ export class StateInstance {
     const input=m.input(bytes);
     try{return m.response(m.call('lang_invoke',this.handle,input)>>>0);}
     finally{m.release(input);}
+  }
+  pure(pure,args) {
+    this.live();const m=this.module;const bytes=m.encoder.encode(stringifyExactJSON({pure,args}));
+    if(bytes.length>4*1024*1024)throw new RangeError('Request exceeds 4 MiB');
+    const input=m.input(bytes);
+    try{return m.response(m.call('lang_invoke',this.handle,input)>>>0);}finally{m.release(input);}
   }
   snapshot(){this.live();return this.module.take(this.module.call('lang_checkpoint',this.handle)>>>0);}
   events(){this.live();return this.module.response(this.module.call('lang_events',this.handle)>>>0);}

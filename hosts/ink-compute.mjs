@@ -218,8 +218,9 @@ function compilePlan(plan, manifest) {
       return constant(v, t);
     });
     const count = f.shader
-      ? Math.min(...f.lengths.map((i) => args[i].count ?? 0))
+      ? Math.max(...f.lengths.map((i) => args[i].count ?? 0))
       : null;
+    if(f.gpu_max_elements && args.some(a=>(a.count??0)>f.gpu_max_elements))reason??="literal GPU collection work limit; compiled CPU fallback";
     if (!f.shader) reason ??= f.fallback_reason ?? "CPU-only function";
     ids.set(step.id, steps.length);
     steps.push({ id: step.id, f, args, count });
@@ -246,13 +247,13 @@ function compilePlan(plan, manifest) {
   if (constants.some((c) => !c.finite))
     reason ??= "non-finite f32 inputs require CPU";
   let bytes = constants.reduce(
-    (n, c) => n + Math.max(4, c.words.byteLength),
+    (n, c) => n + Math.max(4, c.words.byteLength+(c.type.kind==="list"?4:0)),
     0,
   );
   bytes += steps.reduce(
     (n, s) =>
       n +
-      2 * Math.max(4, (s.count ?? 0) * width(s.f.result) * 4) +
+      2 * Math.max(4, (1+(s.count ?? 0) * width(s.f.result)) * 4) +
       4 * (s.args.length + 1),
     0,
   );
@@ -261,8 +262,8 @@ function compilePlan(plan, manifest) {
       n +
       Math.max(
         4,
-        (steps[ids.get(id)].count ?? 0) *
-          width(steps[ids.get(id)].f.result) *
+        (1+(steps[ids.get(id)].count ?? 0) *
+          width(steps[ids.get(id)].f.result)) *
           4,
       ),
     0,
