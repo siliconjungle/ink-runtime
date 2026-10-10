@@ -41,7 +41,7 @@ writer process) and IndexedDB (transactional compare-and-replace). Ordered
 outbox delivery is at least once; receivers deduplicate event coordinates.
 An uncertain write requires reopening before further execution.
 `durable::{CompiledState, Host, Store, FileStore}` supplies native embedding;
-complete C/Rust projects include this host and their runner accepts
+complete C/Rust projects and mixed native wgpu bundles share this host/CLI and accept
 `SCRIPT.json --durable FILE`. Native receipts and outbox acknowledgements survive
 process death after publication but before reply. Complete snapshots are copied
 per call; this is a durability baseline, not a performance claim. See the distribution's
@@ -57,3 +57,5 @@ and durable files remain usable by checked plans for the same source. Raw
 program emission keeps its own namespace, and no identity override is accepted.
 CLI `emit-state` uses `COMPLETE_STATE_RUNNER` and `emit_native_state_host`; the
 specialised `STATE_RUNNER` remains available for direct state-emitter harnesses.
+
+Mixed native bundles dispatch eligible pure calls independently of durable transactions. GPU calls do not publish state or retry receipts; poisoned hosts reject dispatch until reopened. Both native runners share `hosts/native/state-cli.rs`.

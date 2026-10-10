@@ -216,13 +216,16 @@ pub const NATIVE_STATE_ADAPTER: &str = include_str!("../hosts/durable-native-ada
 /// Shared native host implementation for complete and specialised state projects.
 pub fn emit_native_state_host(dir: &Path) -> LangResult<()> {
     fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
-    put(dir, "src/durable.rs", include_str!("durable.rs"))
+    put(dir, "src/durable.rs", include_str!("durable.rs"))?;
+    put(dir, "src/state-cli.rs", NATIVE_STATE_CLI)
 }
 
 pub mod durable;
 pub mod execution;
 pub mod module;
 pub mod toolchain;
+
+const NATIVE_STATE_CLI: &str = include_str!("../hosts/native/state-cli.rs");
 
 pub const STATE_RUNNER: &str = include_str!("../hosts/native/state-main.rs");
 pub const COMPLETE_STATE_RUNNER: &str = include_str!("../hosts/value-main.rs");
