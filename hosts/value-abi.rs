@@ -264,6 +264,19 @@ impl Event {
 }
 impl InkContext {
     fn put(&mut self, v: V) -> u64 {
+        // Opaque value handles carry fixed-width scalar payloads directly.
+        // Heap values remain arena indices; language and snapshot types do not change.
+        let immediate = match &v {
+            V::Unit => Some((1u64, 0u32)),
+            V::Bool(x) => Some((2, *x as u32)),
+            V::U32(x) => Some((3, *x)),
+            V::I32(x) => Some((4, *x as u32)),
+            V::F32(x) => Some((5, *x)),
+            _ => None,
+        };
+        if let Some((tag, bits)) = immediate {
+            return (tag << 32) | u64::from(bits);
+        }
         let n = v.weight();
         if n > 64 * 1024 * 1024 - self.arena_bytes {
             return self.fail("Ink value arena limit exceeded".into());
@@ -273,10 +286,23 @@ impl InkContext {
         self.values.len() as u64
     }
     fn value(&self, h: u64) -> R<V> {
-        self.values
-            .get(h.checked_sub(1).ok_or("invalid value handle")? as usize)
-            .cloned()
-            .ok_or("invalid value handle".into())
+        let bits = h as u32;
+        match h >> 32 {
+            1 if bits == 0 => Ok(V::Unit),
+            2 if bits <= 1 => Ok(V::Bool(bits != 0)),
+            3 => Ok(V::U32(bits)),
+            4 => Ok(V::I32(bits as i32)),
+            5 => Ok(V::F32(bits)),
+            0 => self
+                .values
+                .get(
+                    usize::try_from(h.checked_sub(1).ok_or("invalid value handle")?)
+                        .map_err(|_| "invalid value handle")?,
+                )
+                .cloned()
+                .ok_or("invalid value handle".into()),
+            _ => Err("invalid value handle".into()),
+        }
     }
     fn fail(&mut self, e: String) -> u64 {
         if self.error.is_none() {
@@ -302,7 +328,7 @@ impl InkContext {
             true
         }
     }
-    fn primitive(&mut self, op: &str, a: Vec<V>) -> R<V> {
+    fn primitive(&mut self, op: &str, a: &mut [V]) -> R<V> {
         if let Some(name) = op.strip_prefix("record:") {
             let fs = self.meta["records"][name]
                 .as_array()
@@ -313,8 +339,8 @@ impl InkContext {
             return Ok(V::Record(
                 name.into(),
                 fs.iter()
-                    .zip(a)
-                    .map(|(f, v)| (f[0].as_str().unwrap().into(), v))
+                    .zip(a.iter_mut())
+                    .map(|(f, v)| (f[0].as_str().unwrap().into(), std::mem::replace(v, V::Unit)))
                     .collect(),
             ));
         }
@@ -370,7 +396,11 @@ impl InkContext {
         }
         Ok(match op {
             "list" => V::List(vec![]),
-            "vector" => V::Vector(a),
+            "vector" => V::Vector(
+                a.iter_mut()
+                    .map(|v| std::mem::replace(v, V::Unit))
+                    .collect(),
+            ),
             "Some" => V::Option(Some(Box::new(a[0].clone()))),
             "None" => V::Option(None),
             "Ok" | "Err" => V::Result(op == "Ok", Box::new(a[0].clone())),
@@ -589,8 +619,18 @@ pub unsafe extern "C" fn ink_op(
         } else {
             std::slice::from_raw_parts(args, n)
         };
-        let vs = hs.iter().map(|h| c.value(*h)).collect::<R<Vec<_>>>()?;
-        c.primitive(op, vs)
+        // Most primitives have at most four operands; keep their scratch values
+        // on the stack rather than allocating a fresh Vec for every operation.
+        if hs.len() <= 4 {
+            let mut scratch: [V; 4] = std::array::from_fn(|_| V::Unit);
+            for (slot, h) in scratch.iter_mut().zip(hs) {
+                *slot = c.value(*h)?;
+            }
+            c.primitive(op, &mut scratch[..hs.len()])
+        } else {
+            let mut vs = hs.iter().map(|h| c.value(*h)).collect::<R<Vec<_>>>()?;
+            c.primitive(op, &mut vs)
+        }
     })();
     if c.error.is_some() {
         0
@@ -601,7 +641,11 @@ pub unsafe extern "C" fn ink_op(
 #[no_mangle]
 pub unsafe extern "C" fn ink_item(ctx: *mut InkContext, h: u64, i: usize) -> u64 {
     let c = &mut *ctx;
-    let r = match c.values.get(h.wrapping_sub(1) as usize) {
+    let r = match h
+        .checked_sub(1)
+        .and_then(|n| usize::try_from(n).ok())
+        .and_then(|i| c.values.get(i))
+    {
         Some(V::List(xs) | V::Vector(xs)) => {
             xs.get(i).cloned().ok_or("index outside collection".into())
         }
@@ -612,7 +656,11 @@ pub unsafe extern "C" fn ink_item(ctx: *mut InkContext, h: u64, i: usize) -> u64
 #[no_mangle]
 pub unsafe extern "C" fn ink_length(ctx: *mut InkContext, h: u64) -> usize {
     let c = &mut *ctx;
-    match c.values.get(h.wrapping_sub(1) as usize) {
+    match h
+        .checked_sub(1)
+        .and_then(|n| usize::try_from(n).ok())
+        .and_then(|i| c.values.get(i))
+    {
         Some(V::List(xs) | V::Vector(xs)) => xs.len(),
         _ => {
             c.fail("expected collection".into());
@@ -627,8 +675,20 @@ pub unsafe extern "C" fn ink_append(ctx: *mut InkContext, h: u64, item: u64) {
         return;
     }
     match c.value(item) {
-        Ok(v) => match c.values.get_mut(h.wrapping_sub(1) as usize) {
-            Some(V::List(xs)) => xs.push(v),
+        Ok(v) => match h
+            .checked_sub(1)
+            .and_then(|n| usize::try_from(n).ok())
+            .and_then(|i| c.values.get_mut(i))
+        {
+            Some(V::List(xs)) => {
+                let weight = v.weight();
+                if weight > 64 * 1024 * 1024 - c.arena_bytes {
+                    c.fail("Ink value arena limit exceeded".into());
+                } else {
+                    c.arena_bytes += weight;
+                    xs.push(v);
+                }
+            }
             _ => {
                 c.fail("expected list".into());
             }
@@ -641,8 +701,8 @@ pub unsafe extern "C" fn ink_append(ctx: *mut InkContext, h: u64, item: u64) {
 #[no_mangle]
 pub unsafe extern "C" fn ink_bool(ctx: *mut InkContext, h: u64) -> bool {
     let c = &mut *ctx;
-    match c.values.get(h.wrapping_sub(1) as usize) {
-        Some(V::Bool(v)) => *v,
+    match c.value(h) {
+        Ok(V::Bool(v)) => v,
         _ => {
             c.fail("expected Bool".into());
             false
@@ -652,8 +712,8 @@ pub unsafe extern "C" fn ink_bool(ctx: *mut InkContext, h: u64) -> bool {
 #[no_mangle]
 pub unsafe extern "C" fn ink_u32(ctx: *mut InkContext, h: u64) -> u32 {
     let c = &mut *ctx;
-    match c.values.get(h.wrapping_sub(1) as usize) {
-        Some(V::U32(v)) => *v,
+    match c.value(h) {
+        Ok(V::U32(v)) => v,
         _ => {
             c.fail("expected u32".into());
             0

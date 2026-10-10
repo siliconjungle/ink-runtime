@@ -127,6 +127,7 @@ pub fn emit(module: &CheckedModule, dir: &Path) -> LangResult<()> {
     let js = ink_lowering_js::lower(module)?;
     super::put(dir, "program.mjs", js.javascript)?;
     super::put(dir, "state-wasm.mjs", super::STATE_WASM_HOST)?;
+    super::emit_durable_hosts(dir)?;
     super::put(dir, "ink-gpu.mjs", include_str!("../hosts/ink-module.mjs"))?;
     let mut functions = vec![];
     let mut mods = String::new();

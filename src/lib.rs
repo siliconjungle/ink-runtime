@@ -195,6 +195,20 @@ fn assemble(
 pub const STATE_WASM_ABI: &str = include_str!("../hosts/state-wasm-support.rs");
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
+pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {
+    put(
+        dir,
+        "durable-state.mjs",
+        include_str!("../hosts/durable-state.mjs"),
+    )?;
+    put(
+        dir,
+        "durable-file.mjs",
+        include_str!("../hosts/durable-file.mjs"),
+    )?;
+    Ok(())
+}
+
 pub mod execution;
 pub mod module;
 pub mod toolchain;
@@ -210,6 +224,7 @@ pub fn emit_c_program(module: &core::CheckedModule, dir: &Path) -> LangResult<()
     put(dir, "program.c", emission.c)?;
     put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
     put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
+    emit_durable_hosts(dir)?;
     put(
         dir,
         "manifest.json",
@@ -245,6 +260,7 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     put(dir, "src/main.rs", include_str!("../hosts/value-main.rs"))?;
     put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[workspace]\n")?;
     put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
+    emit_durable_hosts(dir)?;
     put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
     Ok(())
 }

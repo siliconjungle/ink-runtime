@@ -33,3 +33,15 @@ programs contain no Ink parser or AST evaluator. `toolchain::complete_program`
 builds native executables or Wasm modules. `module` extracts GPU-eligible pure
 closures from mixed programs and retains persistent device/profile engines.
 The C header is `hosts/state-abi.h`; browser Wasm support is `hosts/state-wasm.mjs`.
+
+`hosts/durable-state.mjs` provides serialized durable calls and bounded retry
+receipts over generated JavaScript or the complete C/Rust Wasm ABI. Storage
+adapters are Node's atomic synced file replacement (`durable-file.mjs`, one
+writer process) and IndexedDB (transactional compare-and-replace). Ordered
+outbox delivery is at least once; receivers deduplicate event coordinates.
+An uncertain write requires reopening before further execution. Complete
+snapshots are copied per call; this is a durability baseline, not a performance
+claim or native executable embedding. See the distribution's
+[durable host contract](https://github.com/siliconjungle/ink-lang/blob/main/docs/durable-host.md).
+
+Run `node --test tests/durable-state.mjs` for failure-injection and file checks.
