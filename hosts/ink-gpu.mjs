@@ -3,19 +3,12 @@ import {createSelector} from "./backend-selection.mjs";
 // Compiled Wasm CPU fallback + literal WGSL stages. Profiles never grant facts
 // about future inputs. Calls are serialized; trials have no application effects.
 const now=()=>performance.now();
-function word(v,type){
-  if(type==='bool'){if(typeof v!=='boolean')throw Error('expected Bool');return v;}
-  if(type==='u32'){if(!Number.isInteger(v)||v<0||v>0xffffffff)throw Error('expected u32');return v;}
-  if(typeof v==='number'&&!Number.isSafeInteger(v))throw Error('u64 Number must be an exact safe integer; use BigInt or a decimal string');
-  if(typeof v!=='number'&&typeof v!=='bigint'&&!(typeof v==='string'&&/^\d+$/.test(v)))throw Error('expected u64');
-  const n=BigInt(v);if(n<0n||n>0xffffffffffffffffn)throw Error('u64 outside range');return n;
-}
+// Caller owns numeric types/ranges; these conversions implement the Wasm ABI.
+function word(v,type){return type === 'u64' ? BigInt(v) : v;}
 function argumentsFor(f,args){
-  if(!Array.isArray(args)||args.length!==f.params.length)throw Error('argument count mismatch');
   return args.map((v,i)=>{
     const t=f.params[i].type;
     if(!t.startsWith('list_'))return word(v,t);
-    if(!Array.isArray(v)&&!(v instanceof Uint32Array)&&!(v instanceof BigUint64Array))throw Error('expected word list');
     const inner=t.slice(5);
     if(inner==='u32'&&v instanceof Uint32Array)return v.slice();
     if(inner==='u64'&&v instanceof BigUint64Array)return v.slice();
@@ -35,14 +28,19 @@ export async function loadInk(base,options={}){
   async function asset(name){const response=await fetch(new URL(name,baseURL));if(!response.ok)throw Error(`cannot load ${name}: ${response.status}`);return response;}
   const manifest=await (await asset('manifest.json')).json();
   if(manifest.schema!==1||manifest.backend!=='webgpu-wgpu-v1')throw Error('unsupported GPU bundle');
-  const cpuStart=now();
-  const {instance}=await WebAssembly.instantiate(await (await asset('cpu.wasm')).arrayBuffer(),{});
-  const cpuStartup=now()-cpuStart;
+  let instance=null,cpuStartup=0;
+  async function ensureCpu(){
+    if(instance)return;
+    const start=now();
+    instance=(await WebAssembly.instantiate(await (await asset('cpu.wasm')).arrayBuffer(),{})).instance;
+    cpuStartup=now()-start;
+  }
   const functions=new Map(manifest.functions.map(f=>[f.name,f]));
   let closed=false,serial=Promise.resolve();
   const disabled=new Map();
   const selector=createSelector(options);
   const jsStart=now();const javascript=await import(new URL("program.mjs",baseURL));const jsStartup=now()-jsStart;
+  const javascriptFunctions=new Map(manifest.functions.map(f=>[f.name,javascript.functions[f.name]]));
   const adapter=createDevice({asset,onLost:()=>selector.clear()});
   function cpu(f,args){
     const memory=instance.exports.memory;let top=Number(instance.exports.__heap_base.value);const abi=[];
@@ -61,7 +59,9 @@ export async function loadInk(base,options={}){
   }
   async function run(f,args,backend){
     if(closed)throw Error('Ink runtime is closed');
-    const candidates=[{name:'cpu',startupMs:cpuStartup,run:()=>cpu(f,args)}, {name:'javascript',startupMs:jsStartup,verify:(value,reference)=>value===reference,run:()=>javascript.call(f.name,args)}];
+    if(backend==='javascript') return {value:javascriptFunctions.get(f.name)(...args),backend,reason:'explicit backend selection'};
+    await ensureCpu();
+    const candidates=[{name:'cpu',startupMs:cpuStartup,run:()=>cpu(f,args)}, {name:'javascript',startupMs:jsStartup,verify:(value,reference)=>value===reference,run:()=>javascriptFunctions.get(f.name)(...args)}];
     if(f.gpu && !disabled.has(f.index) && options.gpu!==false) candidates.push({name:'gpu',async:true,verify:(value,reference)=>value===reference,prepare:()=>adapter.prepare(f,args),run:async()=>{
       try {return await adapter.run(f,args);}catch(error){if(!/limits|budget/.test(String(error)))disabled.set(f.index,String(error));throw error;}
     }});
@@ -72,7 +72,7 @@ export async function loadInk(base,options={}){
   return {
     manifest,
     capture(name,args){const f=functions.get(name);if(!f)throw Error(`unknown function ${name}`);return argumentsFor(f,args);},
-    run(name,args,selection=backend){const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=argumentsFor(f,args);}catch(e){return Promise.reject(e);}
+    run(name,args,selection=backend){const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
       const pending=serial.then(()=>run(f,validated,selection));serial=pending.catch(()=>{});return pending;},
     async close(){await serial;closed=true;adapter.close();selector.clear();},
   };
