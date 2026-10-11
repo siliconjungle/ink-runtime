@@ -24,6 +24,12 @@ extern "C" {
         count: *mut usize,
     );
     fn ink_compute_reset();
+    fn ink_compute_into(
+        f: u32,
+        data: *const *const c_void,
+        lengths: *const usize,
+        destination: *mut c_void,
+    ) -> usize;
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -330,7 +336,18 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
                 );
             }
         }
-        let count = if f["shader"].is_string() {
+        let count = if f["graph_required"].as_bool() == Some(true) {
+            Some(
+                device::graph_capacity(
+                    &f["graph"],
+                    &args
+                        .iter()
+                        .map(|a| a.count.unwrap_or(0))
+                        .collect::<Vec<_>>(),
+                )?
+                .1,
+            )
+        } else if f["shader"].is_string() {
             f["lengths"]
                 .as_array()
                 .unwrap()
@@ -369,6 +386,15 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
         return Err("pipeline requires outputs".into());
     }
     let mut feedback = BTreeMap::new();
+    if v.get("feedback")
+        .and_then(Value::as_object)
+        .is_some_and(|f| !f.is_empty())
+        && steps
+            .iter()
+            .any(|s| s.f["graph_required"].as_bool() == Some(true))
+    {
+        reason.get_or_insert("GPU stage graph feedback is unsupported".into());
+    }
     if let Some(f) = v.get("feedback") {
         for (input, id) in f.as_object().ok_or("feedback must be an object")? {
             let r = inputs.get(input).ok_or("unknown feedback input")?;
@@ -531,6 +557,26 @@ impl Engine {
             gpu_error: None,
             profiles: BTreeMap::new(),
         }
+    }
+    /// Execute a compiled list function into caller-owned packed storage.
+    ///
+    /// # Safety
+    /// Parameters must match the declared function ABI; lengths are logical
+    /// element counts. The destination must be sufficiently large, aligned to
+    /// eight bytes, writable and disjoint from every reachable input. No other
+    /// arena-backed result may remain live across this call. Returned count is
+    /// in 32-bit words. Caller storage remains valid after scratch is reset.
+    pub unsafe fn call_packed_into(
+        &mut self,
+        index: u32,
+        data: &[*const c_void],
+        lengths: &[usize],
+        destination: *mut u32,
+    ) -> usize {
+        ink_compute_reset();
+        let count = ink_compute_into(index, data.as_ptr(), lengths.as_ptr(), destination.cast());
+        ink_compute_reset();
+        count
     }
     pub fn manifest(&self) -> &Value {
         &self.manifest

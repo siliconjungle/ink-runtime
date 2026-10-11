@@ -2,7 +2,10 @@
 use ink_core::{core::CheckedModule, LangResult};
 use std::{path::Path, process::Command};
 pub fn wasm(module: &CheckedModule, c: &Path, output: &Path, zig: &str) -> LangResult<()> {
-    let target = ink_lowering_wasm::lower(module)?;
+    wasm_with_abi(module,c,output,zig,ink_core::compute_values::needed(module.pure_program()?))
+}
+pub fn wasm_with_abi(module: &CheckedModule, c: &Path, output: &Path, zig: &str, packed:bool) -> LangResult<()> {
+    let target = ink_lowering_wasm::lower_with_abi(module,packed)?;
     let mut command = Command::new(zig);
     command.args([
         "cc",

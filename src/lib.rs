@@ -37,6 +37,11 @@ fn scalar_cpu(p: &Program) -> LangResult<String> {
     c.push_str("default:lang_fail();return 0;\n}\n}\n");
     Ok(c)
 }
+/// Physical host ABI selection follows the GPU package's emitted capabilities.
+/// This does not change language semantics or select an optimisation law.
+pub fn uses_packed_compute(p: &Program) -> bool {
+    ink_lowering_gpu::compute::needed(p)
+}
 pub fn emit_selected(
     selected: &ink_core::optimisation::CheckedSelection,
     dir: &Path,
@@ -54,7 +59,7 @@ pub fn emit_gpu(p: &Program, dir: &Path) -> LangResult<()> {
     }
 }
 pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path) -> LangResult<()> {
-    if ink_core::compute_values::needed(route.module().program()) {
+    if uses_packed_compute(route.module().pure_program()?) {
         return Err("routed scalar ABI does not support packed compute plans".into());
     }
     for s in &route.package().stages {
@@ -73,7 +78,7 @@ fn assemble(
     route: Option<&ink_core::source_routing::CheckedRouting>,
 ) -> LangResult<()> {
     let p = checked.pure_program()?;
-    let compute = ink_core::compute_values::needed(p);
+    let compute = uses_packed_compute(p);
     let c = if compute {
         ink_lowering_c::compute::emit_c(p)?
     } else {
@@ -82,6 +87,16 @@ fn assemble(
     let javascript = ink_lowering_js::lower(checked)?;
     let mut emitted = ink_lowering_gpu::gpu::lower(checked)?;
     emitted.manifest["javascript"] = javascript.manifest.clone();
+    if compute {
+        emitted.manifest["destination_abi"] = json!({
+            "name":"ink-packed-into-v1", "symbol":"ink_compute_into",
+            "count":"words32", "ownership":"caller-owned",
+            "capacity":"trusted", "alignment":8,
+            "aliasing":"destination-disjoint-from-all-reachable-inputs",
+            "scratch_lifetime":"call-mark-rewind",
+            "prepared_instance":"exclusive"
+        });
+    }
     emitted.manifest["cpu_c_sha256"] = json!(format!("{:x}", Sha256::digest(c.as_bytes())));
     emitted.manifest["runtime_abi"] = json!(if compute {
         "ink-packed-pipeline-v2"
@@ -92,6 +107,9 @@ fn assemble(
     let manifest = serde_json::to_string_pretty(&emitted.manifest).map_err(|e| e.to_string())?;
     put(dir, "manifest.json", &manifest)?;
     put(dir, "program.mjs", &javascript.javascript)?;
+    if compute {
+        put(dir, "prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs"))?;
+    }
     put(
         dir,
         "backend-selection.mjs",
