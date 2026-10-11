@@ -163,6 +163,11 @@ fn assemble(
     )?;
     put(
         dir,
+        "native/src/backend.rs",
+        include_str!("../hosts/native/backend.rs"),
+    )?;
+    put(
+        dir,
         "native/src/lib.rs",
         if compute {
             include_str!("../hosts/native/compute.rs")

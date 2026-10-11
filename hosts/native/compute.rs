@@ -30,24 +30,8 @@ extern "C" {
         destination: *mut c_void,
     ) -> usize;
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    Auto,
-    Cpu,
-    Gpu,
-    GpuRequired,
-}
-impl Backend {
-    pub fn parse(s: &str) -> Result<Self> {
-        match s {
-            "auto" => Ok(Self::Auto),
-            "cpu" => Ok(Self::Cpu),
-            "gpu" => Ok(Self::Gpu),
-            "gpu-required" => Ok(Self::GpuRequired),
-            _ => Err("backend must be auto, cpu or gpu".into()),
-        }
-    }
-}
+mod backend;
+pub use backend::Backend;
 use ink_abi::packed::{width,Data,pack,unpack};
 #[derive(Clone)]
 struct Ref {
