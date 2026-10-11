@@ -160,11 +160,11 @@ export class StatefulModule {
   }
 }
 export class StateInstance {
-  constructor(module,handle){this.module=module;this.handle=handle;this.disposed=false;this.busy=false;}
+  constructor(module,handle){this.module=module;this.handle=handle;this.disposed=false;this.busy=false;this.transaction=false;}
   live(){if(this.disposed)throw new AbiError('State handle was disposed');if(this.busy)throw new AbiError('State operation already in progress');}
   async pureAsync(pure,args){this.live();const reply=await __wasmAsync({mode:'pure',module:this.module.compiled,pure,args,workers:this.module.workerCount});this.module.recordParallelStatistics(reply.statistics);return reply.value;}
   async invokeAsync(call,args){
-    this.live();const snapshot=this.snapshot();this.busy=true;
+    this.live();if(this.transaction)throw new AbiError('Async handle replacement during state transaction');const snapshot=this.snapshot();this.busy=true;
     try{const reply=await __wasmAsync({mode:'invoke',module:this.module.compiled,call,args,snapshot,workers:this.module.workerCount});this.module.recordParallelStatistics(reply.statistics);const replacement=this.module.restore(reply.snapshot);const old=this.handle;if(this.module.call('lang_state_drop',old)!==1){replacement.dispose();throw this.module.error();}this.handle=replacement.handle;replacement.disposed=true;return reply.value;}
     finally{this.busy=false;}
   }
@@ -182,6 +182,9 @@ export class StateInstance {
     const input=m.input(bytes);
     try{return m.response(m.call('lang_invoke',this.handle,input)>>>0);}finally{m.release(input);}
   }
+  beginTransaction(){this.live();if(this.transaction)throw new AbiError('State transaction already in progress');if(typeof this.module.exports.lang_transaction_begin!=='function')return false;const code=this.module.call('lang_transaction_begin',this.handle);if(code===2)return false;if(code!==1)throw this.module.error();this.transaction=true;return true;}
+  commitTransaction(){this.live();if(!this.transaction)throw new AbiError('No state transaction');if(this.module.call('lang_transaction_commit',this.handle)!==1)throw this.module.error();this.transaction=false;}
+  rollbackTransaction(){this.live();if(!this.transaction)throw new AbiError('No state transaction');if(this.module.call('lang_transaction_rollback',this.handle)!==1)throw this.module.error();this.transaction=false;}
   snapshot(){this.live();return this.module.take(this.module.call('lang_checkpoint',this.handle)>>>0);}
   events(){this.live();return this.module.response(this.module.call('lang_events',this.handle)>>>0);}
   version(){this.live();return BigInt.asUintN(64,this.module.call('lang_version',this.handle));}

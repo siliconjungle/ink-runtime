@@ -191,3 +191,127 @@ fn exact_receipts_and_structure_limits() {
     host.invoke("new", "add", &json!([1])).unwrap();
     assert!(stale.invoke("stale", "add", &json!([1])).is_err());
 }
+
+struct JournalState {
+    state: State,
+    prior: Option<State>,
+}
+static CHECKPOINTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+impl CompiledState for JournalState {
+    fn create() -> Self {
+        Self {
+            state: State::create(),
+            prior: None,
+        }
+    }
+    fn restore(bytes: &[u8]) -> Result<Self, String> {
+        Ok(Self {
+            state: State::restore(bytes)?,
+            prior: None,
+        })
+    }
+    fn checkpoint(&self) -> Result<Vec<u8>, String> {
+        CHECKPOINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.state.checkpoint()
+    }
+    fn invoke(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+        self.state.invoke(name, args)
+    }
+    fn pure(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+        self.state.pure(name, args)
+    }
+    fn events(&self) -> Vec<Value> {
+        self.state.events()
+    }
+    fn acknowledge(&mut self, c: u64, p: u64) {
+        self.state.acknowledge(c, p)
+    }
+    fn version(&self) -> u64 {
+        self.state.version()
+    }
+    fn begin_transaction(&mut self) -> Result<bool, String> {
+        assert!(self.prior.is_none());
+        self.prior = Some(self.state.clone());
+        Ok(true)
+    }
+    fn commit_transaction(&mut self) {
+        self.prior = None;
+    }
+    fn rollback_transaction(&mut self) {
+        self.state = self.prior.take().unwrap();
+    }
+}
+#[test]
+fn journal_appends_receipts_without_checkpoints_and_recovers_torn_tails() {
+    use ink_runtime::durable::FileStore;
+    use std::{fs, io::Write, sync::atomic::Ordering};
+    let dir = std::env::temp_dir().join(format!("ink-durable-journal-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("state");
+    let _ = fs::remove_file(&path);
+    CHECKPOINTS.store(0, Ordering::Relaxed);
+    let mut host = Host::<JournalState, _>::open_with_checkpoint_interval(
+        FileStore::open(&path).unwrap(),
+        2,
+        4,
+    )
+    .unwrap();
+    assert_eq!(CHECKPOINTS.load(Ordering::Relaxed), 1);
+    host.invoke("a", "add", &json!([7])).unwrap();
+    host.invoke("read", "read", &json!([u64::MAX, -0.0]))
+        .unwrap();
+    host.acknowledge(1, 0).unwrap();
+    assert_eq!(
+        CHECKPOINTS.load(Ordering::Relaxed),
+        1,
+        "append must not transport the state"
+    );
+    assert!(host.invoke("abort", "fail", &json!([])).is_err());
+    assert_eq!(host.version().unwrap(), 1);
+    let complete = fs::read(&path).unwrap();
+    assert_eq!(&complete[..4], b"INKL");
+    drop(host);
+    for tail in [&[1, 2, 3][..], &[8, 0, 0, 0, 1, 2, 3][..]] {
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(tail).unwrap();
+        drop(file);
+        let mut recovered = Host::<JournalState, _>::open_with_checkpoint_interval(
+            FileStore::open(&path).unwrap(),
+            999,
+            4,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), complete);
+        assert_eq!(recovered.version().unwrap(), 1);
+        assert!(recovered.events().unwrap().is_empty());
+        assert_eq!(
+            recovered
+                .invoke("read", "read", &json!([u64::MAX, -0.0]))
+                .unwrap(),
+            json!([u64::MAX, -0.0])
+        );
+        drop(recovered);
+    }
+    let mut host = Host::<JournalState, _>::open_with_checkpoint_interval(
+        FileStore::open(&path).unwrap(),
+        2,
+        4,
+    )
+    .unwrap();
+    host.invoke("b", "add", &json!([1])).unwrap();
+    assert_eq!(host.version().unwrap(), 2);
+    let compacted = fs::read(&path).unwrap();
+    assert!(compacted.len() < complete.len());
+    drop(host);
+    let mut corrupted = complete.clone();
+    let end = corrupted.len() - 1;
+    corrupted[end] ^= 1;
+    fs::write(&path, &corrupted).unwrap();
+    assert!(
+        Host::<JournalState, _>::open(FileStore::open(&path).unwrap(), 2)
+            .err()
+            .unwrap()
+            .contains("checksum")
+    );
+    fs::remove_dir_all(dir).unwrap();
+}

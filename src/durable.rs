@@ -14,7 +14,12 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 const SNAPSHOT_LIMIT: usize = 64 * 1024 * 1024;
 const HEADER_LIMIT: usize = 4 * 1024 * 1024;
+const FRAME_LIMIT: usize = 4 * HEADER_LIMIT + 4096;
+const LOG_LIMIT: usize = 128 * 1024 * 1024;
 /// Implemented by generated state, or another explicitly trusted host adapter.
+/// Every committed state/event mutation increments version; unsuccessful actions
+/// and queries leave both unchanged. Replay uses deterministic compiled calls.
+/// A retained transaction contains one invocation or acknowledgement.
 pub trait CompiledState: Sized {
     fn create() -> Self;
     fn restore(bytes: &[u8]) -> Result<Self>;
@@ -24,14 +29,90 @@ pub trait CompiledState: Sized {
     fn events(&self) -> Vec<Value>;
     fn acknowledge(&mut self, commit: u64, position: u64);
     fn version(&self) -> u64;
+    /// Retain a rollback boundary without transporting a complete checkpoint.
+    /// False selects the existing checkpoint/restore adapter.
+    fn begin_transaction(&mut self) -> Result<bool> {
+        Ok(false)
+    }
+    fn commit_transaction(&mut self) {}
+    fn rollback_transaction(&mut self) {}
 }
 pub trait Store {
     fn load(&mut self) -> Result<Option<(String, Vec<u8>)>>;
     /// Compare the previous token, then atomically publish. Any error is ambiguous.
     fn commit(&mut self, expected: Option<&str>, bytes: &[u8]) -> Result<String>;
+    /// Append one atomically recoverable operation/receipt frame. None means
+    /// unsupported or compaction required; no publication may have occurred.
+    fn append(&mut self, _expected: &str, _bytes: &[u8]) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 fn token(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+fn log_base(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + bytes.len());
+    out.extend_from_slice(b"INKL");
+    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(bytes);
+    out
+}
+fn framed(previous: &str, bytes: &[u8]) -> Result<(Vec<u8>, String)> {
+    if bytes.len() > FRAME_LIMIT {
+        return Err("durable frame limit".into());
+    }
+    let length = (bytes.len() as u32).to_le_bytes();
+    let mut hash = Sha256::new();
+    hash.update(previous.as_bytes());
+    hash.update(length);
+    hash.update(bytes);
+    let digest = hash.finalize();
+    let mut out = Vec::with_capacity(36 + bytes.len());
+    out.extend_from_slice(&length);
+    out.extend_from_slice(bytes);
+    out.extend_from_slice(&digest);
+    Ok((out, format!("{digest:x}")))
+}
+/// A torn final frame is an unpublished tail. Complete corrupt frames reject.
+fn split_log(bytes: &[u8]) -> Result<(&[u8], Vec<&[u8]>, String, usize)> {
+    if !bytes.starts_with(b"INKL") {
+        return Ok((bytes, vec![], token(bytes), bytes.len()));
+    }
+    if bytes.len() < 8 || bytes.len() > LOG_LIMIT {
+        return Err("durable log limit".into());
+    }
+    let n = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+    if n > SNAPSHOT_LIMIT + HEADER_LIMIT + 40 || 8 + n > bytes.len() {
+        return Err("invalid durable log checkpoint".into());
+    }
+    let base = &bytes[8..8 + n];
+    let mut previous = token(base);
+    let mut at = 8 + n;
+    let mut frames = vec![];
+    while at < bytes.len() {
+        if bytes.len() - at < 4 {
+            break;
+        }
+        let n = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        if n > FRAME_LIMIT {
+            return Err("durable frame limit".into());
+        }
+        if bytes.len() - at < 36 + n {
+            break;
+        }
+        let payload = &bytes[at + 4..at + 4 + n];
+        let (expected, next) = framed(&previous, payload)?;
+        if expected[4 + n..] != bytes[at + 4 + n..at + 36 + n] {
+            return Err("durable frame checksum mismatch".into());
+        }
+        if frames.len() >= 4096 {
+            return Err("durable replay operation limit".into());
+        }
+        frames.push(payload);
+        previous = next;
+        at += 36 + n;
+    }
+    Ok((base, frames, previous, at))
 }
 fn pack(value: &Value) -> Value {
     match value {
@@ -208,6 +289,115 @@ fn decode(bytes: &[u8]) -> Result<(Vec<u8>, Vec<Receipt>, usize)> {
     }
     Ok((bytes[8 + n..end].to_vec(), receipts, limit))
 }
+// Backend JSON adapters can transport a typed integer as Number or BigInt.
+// Compare decimal values exactly (including signed zero), never through f64.
+fn replay_number(text: &str) -> String {
+    let (mantissa, exponent) = text.split_once(['e', 'E']).unwrap_or((text, "0"));
+    let exponent: i32 = exponent.parse().unwrap();
+    let negative = mantissa.starts_with('-');
+    let mantissa = mantissa.trim_start_matches('-');
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let mut digits = format!("{whole}{fraction}")
+        .trim_start_matches('0')
+        .to_string();
+    if digits.is_empty() {
+        return if negative { "-0".into() } else { "0".into() };
+    }
+    let mut power = exponent - fraction.len() as i32;
+    while digits.ends_with('0') {
+        digits.pop();
+        power += 1;
+    }
+    format!("{}{digits}e{power}", if negative { "-" } else { "" })
+}
+fn replay_value(value: &Value) -> Value {
+    match value {
+        Value::Number(n) => json!({"number":replay_number(&n.to_string())}),
+        Value::Array(xs) => json!({"array":xs.iter().map(replay_value).collect::<Vec<_>>()}),
+        Value::Object(xs) => {
+            json!({"object":xs.iter().map(|(k,v)|json!([k,replay_value(v)])).collect::<Vec<_>>()})
+        }
+        value => value.clone(),
+    }
+}
+fn decimal(v: &Value) -> Result<u64> {
+    let text = v.as_str().ok_or("invalid durable version")?;
+    let n: u64 = text.parse().map_err(|_| "invalid durable version")?;
+    if n.to_string() != text {
+        return Err("invalid durable version".into());
+    }
+    Ok(n)
+}
+fn keep_receipt(receipts: &mut Vec<Receipt>, receipt: Receipt, limit: usize) {
+    receipts.push(receipt);
+    if receipts.len() > limit {
+        receipts.remove(0);
+    }
+}
+fn replay<S: CompiledState>(
+    state: &mut S,
+    receipts: &mut Vec<Receipt>,
+    limit: usize,
+    bytes: &[u8],
+) -> Result<()> {
+    if bytes.len() > FRAME_LIMIT {
+        return Err("durable frame limit".into());
+    }
+    let frame: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if frame["format"] != "ink-durable-operation-v1"
+        || decimal(&frame["before"])? != state.version()
+    {
+        return Err("durable operation boundary mismatch".into());
+    }
+    let after = decimal(&frame["after"])?;
+    match frame["kind"].as_str() {
+        Some("ack") => state.acknowledge(decimal(&frame["commit"])?, decimal(&frame["position"])?),
+        Some(kind @ ("invoke" | "receipt")) => {
+            let r = &frame["receipt"];
+            let id = r["id"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.encode_utf16().count() <= 256)
+                .ok_or("invalid request id")?;
+            if receipts.iter().any(|r| r.id == id) {
+                return Err("duplicate durable receipt id".into());
+            }
+            let request = r["request"]
+                .as_str()
+                .filter(|s| s.len() <= HEADER_LIMIT)
+                .ok_or("invalid durable request")?;
+            let reply = r["reply"]
+                .as_str()
+                .filter(|s| s.len() <= HEADER_LIMIT)
+                .ok_or("invalid durable reply")?;
+            let args = unpacked(request)?;
+            unpacked(reply)?;
+            if kind == "invoke" {
+                let call = args["call"].as_str().ok_or("invalid durable call")?;
+                if replay_value(&state.invoke(call, &args["args"])?)
+                    != replay_value(&unpacked(reply)?)
+                {
+                    return Err("durable replay reply mismatch".into());
+                }
+            } else if after != state.version() {
+                return Err("receipt changed durable state".into());
+            }
+            keep_receipt(
+                receipts,
+                Receipt {
+                    id: id.into(),
+                    request: request.into(),
+                    reply: reply.into(),
+                },
+                limit,
+            );
+        }
+        _ => return Err("invalid durable operation".into()),
+    }
+    if state.version() != after {
+        return Err("durable replay version mismatch".into());
+    }
+    Ok(())
+}
 /// Calls require mutable ownership. The published state is never exposed for mutation.
 pub struct Host<S: CompiledState, T: Store> {
     state: S,
@@ -215,39 +405,106 @@ pub struct Host<S: CompiledState, T: Store> {
     token: String,
     receipts: Vec<Receipt>,
     limit: usize,
+    frames: usize,
+    checkpoint_interval: usize,
     poison: Option<String>,
 }
 impl<S: CompiledState, T: Store> Host<S, T> {
-    pub fn open(mut store: T, limit: usize) -> Result<Self> {
+    pub fn open(store: T, limit: usize) -> Result<Self> {
+        Self::open_with_checkpoint_interval(store, limit, 32)
+    }
+    /// A checkpoint after this many operations bounds replay independently of table size.
+    pub fn open_with_checkpoint_interval(
+        mut store: T,
+        limit: usize,
+        checkpoint_interval: usize,
+    ) -> Result<Self> {
         if !(1..=4096).contains(&limit) {
             return Err("receipt retention must be 1..4096".into());
         }
-        let (state, token, receipts, limit) = if let Some((token, bytes)) = store.load()? {
-            let (snapshot, receipts, limit) = decode(&bytes)?;
-            (S::restore(&snapshot)?, token, receipts, limit)
-        } else {
-            let state = S::create();
-            let token = store.commit(None, &encode(&state.checkpoint()?, &[], limit)?)?;
-            (state, token, vec![], limit)
-        };
+        if !(1..=4096).contains(&checkpoint_interval) {
+            return Err("checkpoint interval must be 1..4096".into());
+        }
+        let (state, token, receipts, limit, frames) =
+            if let Some((saved_token, bytes)) = store.load()? {
+                let (base, frames, rolling_token, _) = split_log(&bytes)?;
+                if bytes.starts_with(b"INKL") && saved_token != rolling_token {
+                    return Err("durable log token mismatch".into());
+                }
+                let (snapshot, mut receipts, limit) = decode(base)?;
+                let mut state = S::restore(&snapshot)?;
+                for frame in &frames {
+                    replay(&mut state, &mut receipts, limit, frame)?;
+                }
+                (state, saved_token, receipts, limit, frames.len())
+            } else {
+                let state = S::create();
+                let token = store.commit(None, &encode(&state.checkpoint()?, &[], limit)?)?;
+                (state, token, vec![], limit, 0)
+            };
         Ok(Self {
             state,
             store,
             token,
             receipts,
             limit,
+            frames,
+            checkpoint_interval,
             poison: None,
         })
     }
     fn live(&self) -> Result<()> {
         self.poison.as_ref().map_or(Ok(()), |e| Err(e.clone()))
     }
-    fn publish(&mut self, candidate: S, receipts: Vec<Receipt>) -> Result<()> {
-        let bytes = encode(&candidate.checkpoint()?, &receipts, self.limit)?;
-        match self.store.commit(Some(&self.token), &bytes) {
-            Ok(token) => {
-                self.state = candidate;
+    /// None denotes the state's own undo/COW boundary; Some is the compatibility adapter.
+    fn begin(&mut self) -> Result<Option<S>> {
+        if self.state.begin_transaction()? {
+            Ok(None)
+        } else {
+            let candidate = S::restore(&self.state.checkpoint()?)?;
+            Ok(Some(std::mem::replace(&mut self.state, candidate)))
+        }
+    }
+    fn rollback(&mut self, prior: Option<S>) {
+        if let Some(prior) = prior {
+            self.state = prior;
+        } else {
+            self.state.rollback_transaction();
+        }
+    }
+    fn publish(&mut self, receipts: Vec<Receipt>, frame: Value) -> Result<()> {
+        let payload = serde_json::to_vec(&frame).map_err(|e| e.to_string())?;
+        if payload.len() > FRAME_LIMIT {
+            return Err("durable frame limit".into());
+        }
+        // Build any required checkpoint before touching storage. Encoding failure is unambiguous.
+        let checkpoint = if self.frames + 1 >= self.checkpoint_interval {
+            Some(encode(&self.state.checkpoint()?, &receipts, self.limit)?)
+        } else {
+            None
+        };
+        let append = if checkpoint.is_none() {
+            self.store.append(&self.token, &payload)
+        } else {
+            Ok(None)
+        };
+        let result = match append {
+            Ok(Some(token)) => Ok((token, self.frames + 1)),
+            Ok(None) => {
+                let bytes = match checkpoint {
+                    Some(bytes) => bytes,
+                    None => encode(&self.state.checkpoint()?, &receipts, self.limit)?,
+                };
+                self.store
+                    .commit(Some(&self.token), &bytes)
+                    .map(|token| (token, 0))
+            }
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok((token, frames)) => {
                 self.token = token;
+                self.frames = frames;
                 self.receipts = receipts;
                 Ok(())
             }
@@ -265,29 +522,37 @@ impl<S: CompiledState, T: Store> Host<S, T> {
             return Err("request id must have 1..256 characters".into());
         }
         let request = packed(&json!({"call":call,"args":args}))?;
-        if request.len() > HEADER_LIMIT {
-            return Err("request limit".into());
-        }
         if let Some(old) = self.receipts.iter().find(|r| r.id == id) {
-            if old.request != request {
+            if replay_value(&unpacked(&old.request)?) != replay_value(&unpacked(&request)?) {
                 return Err("request id reused with different arguments".into());
             }
             return unpacked(&old.reply);
         }
-        let mut candidate = S::restore(&self.state.checkpoint()?)?;
-        let reply = candidate.invoke(call, args)?;
-        let encoded = packed(&reply)?;
-        let mut receipts = self.receipts.clone();
-        receipts.push(Receipt {
-            id: id.into(),
-            request,
-            reply: encoded,
-        });
-        if receipts.len() > self.limit {
-            receipts.remove(0);
+        let before = self.state.version();
+        let prior = self.begin()?;
+        let result = (|| {
+            let reply = self.state.invoke(call, args)?;
+            let encoded = packed(&reply)?;
+            let mut receipts = self.receipts.clone();
+            keep_receipt(
+                &mut receipts,
+                Receipt {
+                    id: id.into(),
+                    request: request.clone(),
+                    reply: encoded.clone(),
+                },
+                self.limit,
+            );
+            let after = self.state.version();
+            self.publish(receipts, json!({"format":"ink-durable-operation-v1","kind":if after==before {"receipt"} else {"invoke"},"before":before.to_string(),"after":after.to_string(),"receipt":{"id":id,"request":request,"reply":encoded}}))?;
+            Ok(reply)
+        })();
+        if result.is_ok() {
+            self.state.commit_transaction();
+        } else {
+            self.rollback(prior);
         }
-        self.publish(candidate, receipts)?;
-        Ok(reply)
+        result
     }
     pub fn pure(&mut self, call: &str, args: &Value) -> Result<Value> {
         self.live()?;
@@ -307,9 +572,16 @@ impl<S: CompiledState, T: Store> Host<S, T> {
     }
     pub fn acknowledge(&mut self, commit: u64, position: u64) -> Result<()> {
         self.live()?;
-        let mut candidate = S::restore(&self.state.checkpoint()?)?;
-        candidate.acknowledge(commit, position);
-        self.publish(candidate, self.receipts.clone())
+        let prior = self.begin()?;
+        let version = self.state.version();
+        self.state.acknowledge(commit, position);
+        let result = self.publish(self.receipts.clone(), json!({"format":"ink-durable-operation-v1","kind":"ack","before":version.to_string(),"after":version.to_string(),"commit":commit.to_string(),"position":position.to_string()}));
+        if result.is_ok() {
+            self.state.commit_transaction();
+        } else {
+            self.rollback(prior);
+        }
+        result
     }
     /// At least once; receiver deduplicates application/commit/position before returning.
     pub fn deliver(
@@ -336,6 +608,9 @@ static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 pub struct FileStore {
     path: PathBuf,
     parent: PathBuf,
+    current: Option<String>,
+    length: usize,
+    journal: bool,
 }
 impl FileStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -355,7 +630,13 @@ impl FileStore {
         {
             return Err("durable file already has a writer in this process".into());
         }
-        Ok(Self { path, parent })
+        Ok(Self {
+            path,
+            parent,
+            current: None,
+            length: 0,
+            journal: false,
+        })
     }
 }
 impl Store for FileStore {
@@ -366,13 +647,25 @@ impl Store for FileStore {
             Err(e) => return Err(e.to_string()),
         };
         let mut bytes = vec![];
-        file.take((SNAPSHOT_LIMIT + HEADER_LIMIT + 41) as u64)
+        file.take((LOG_LIMIT + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
-        if bytes.len() > SNAPSHOT_LIMIT + HEADER_LIMIT + 40 {
-            return Err("durable record limit".into());
+        let (_, _, current, consumed) = split_log(&bytes)?;
+        if consumed < bytes.len() {
+            OpenOptions::new()
+                .write(true)
+                .open(&self.path)
+                .and_then(|f| {
+                    f.set_len(consumed as u64)?;
+                    f.sync_all()
+                })
+                .map_err(|e| e.to_string())?;
+            bytes.truncate(consumed);
         }
-        Ok(Some((token(&bytes), bytes)))
+        self.current = Some(current.clone());
+        self.length = consumed;
+        self.journal = bytes.starts_with(b"INKL");
+        Ok(Some((current, bytes)))
     }
     fn commit(&mut self, expected: Option<&str>, bytes: &[u8]) -> Result<String> {
         if bytes.len() > SNAPSHOT_LIMIT + HEADER_LIMIT + 40 {
@@ -401,8 +694,9 @@ impl Store for FileStore {
                 Err(e) => return Err(e.to_string()),
             }
         };
+        let envelope = log_base(bytes);
         let result = (|| {
-            file.write_all(bytes).map_err(|e| e.to_string())?;
+            file.write_all(&envelope).map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
             drop(file);
             fs::rename(&temporary, &self.path).map_err(|e| e.to_string())?;
@@ -414,7 +708,37 @@ impl Store for FileStore {
         if temporary.exists() {
             let _ = fs::remove_file(temporary);
         }
+        if let Ok(current) = &result {
+            self.current = Some(current.clone());
+            self.length = envelope.len();
+            self.journal = true;
+        }
         result
+    }
+    fn append(&mut self, expected: &str, bytes: &[u8]) -> Result<Option<String>> {
+        if self.current.as_deref() != Some(expected) {
+            return Err("storage conflict".into());
+        }
+        if !self.journal {
+            return Ok(None);
+        }
+        let (frame, current) = framed(expected, bytes)?;
+        if self.length + frame.len() > LOG_LIMIT {
+            return Ok(None);
+        }
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .map_err(|e| e.to_string())?;
+        if file.metadata().map_err(|e| e.to_string())?.len() != self.length as u64 {
+            return Err("storage conflict".into());
+        }
+        file.write_all(&frame)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        self.current = Some(current.clone());
+        self.length += frame.len();
+        Ok(Some(current))
     }
 }
 impl Drop for FileStore {
