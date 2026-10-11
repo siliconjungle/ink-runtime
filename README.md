@@ -44,7 +44,7 @@ native values between stages rather than packing, unpacking and recapturing each
 intermediate result. They remain serialized, so callers must keep borrowed
 JavaScript inputs stable until the returned promise settles. Wasm/GPU calls still
 snapshot inputs for transport; flat U32 typed arrays use one bulk clone. CPU
-fallback loads lazily when needed. Captured automatic U32 JavaScript calls reuse
+fallback loads lazily when needed. Captured adaptive automatic U32 JavaScript calls reuse
 the private typed transport snapshot as a native list; they do not unpack a
 second input array. Packed-host identity results still become fresh public
 Arrays, and explicit JavaScript identity calls retain their borrowed-input
