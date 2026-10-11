@@ -120,6 +120,10 @@ fn symbols(source: &str, prefix: &str) -> String {
     }
     out
 }
+fn gpu_entry_eligible(entry: &serde_json::Value) -> bool {
+    entry["shader"].is_string() || entry["graph"].is_object() || entry["gpu"].is_object()
+}
+
 pub fn emit(module: &CheckedModule, dir: &Path) -> LangResult<()> {
     emit_checked(module, None, dir)
 }
@@ -173,7 +177,7 @@ fn emit_checked(
                     .iter()
                     .find(|e| e["name"] == f.name)
                     .unwrap();
-                let eligible = entry["shader"].is_string() || entry["gpu"].is_object();
+                let eligible = gpu_entry_eligible(entry);
                 if eligible {
                     let prefix = format!("ink_part{i}_");
                     let cpath = dir.join(&folder).join("native/cpu.c");
@@ -220,9 +224,23 @@ fn emit_checked(
         "manifest.json",
         serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
     )?;
-    super::put(dir,"native/Cargo.toml","[package]\nname=\"ink-module-program\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[dependencies]\ncompiled-state={path=\"../cpu\"}\nwgpu=\"=30.0.1\"\npollster=\"0.4\"\nserde_json={version=\"1\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n")?;
+    super::put(dir,"native/Cargo.toml","[package]\nname=\"ink-module-program\"\nversion=\"0.1.0\"\nedition=\"2021\"\nautolib=false\n[dependencies]\ncompiled-state={path=\"../cpu\"}\nwgpu=\"=30.0.1\"\npollster=\"0.4\"\nserde_json={version=\"1\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n")?;
     super::put(dir, "native/build.rs", format!("fn main(){{{builds}}}"))?;
     let code=format!("{mods}\nstruct GpuEngines{{{fields}}}impl GpuEngines{{fn new()->Self{{Self{{{init}}}}} fn call(&mut self,name:&str,args:&serde_json::Value,backend:&str)->Result<serde_json::Value,String>{{match name{{{cases}_=>Err(\"CPU-only function\".into())}}}}}}\n{}",include_str!("../hosts/native/module-main.rs"));
     super::put(dir, "native/src/state-cli.rs", super::NATIVE_STATE_CLI)?;
     super::put(dir, "native/src/main.rs", code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gpu_entry_eligible;
+    use serde_json::json;
+    #[test]
+    fn graph_only_gpu_entries_are_eligible_in_mixed_modules() {
+        assert!(gpu_entry_eligible(&json!({"shader":null,"graph_required":true,"graph":{"nodes":[{"shader":"fold.wgsl"}]}})));
+        assert!(gpu_entry_eligible(&json!({"shader":"map.wgsl","graph":null})));
+        assert!(!gpu_entry_eligible(&json!({"shader":null,"graph":null,"fallback_reason":"unsupported carrier"})));
+        assert!(gpu_entry_eligible(&json!({"gpu":{"aggregate":"sum","list_param":0,"stages":[]}})));
+        assert!(!gpu_entry_eligible(&json!({})));
+    }
 }
