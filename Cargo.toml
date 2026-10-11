@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 [dependencies]
-ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "ea1a4d785768cb342945c6b1ef426875f9e3f910" }
+ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "b7a2e286307cf72e84015b32944bd46ab8b0b508" }
 ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "48f543dce52e13eb80e86cd0a92151246225afc3" }
 ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "099044fefdb0a2c49c50afe516564af569f62300" }
 ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "b4ac293584133cc38aa9ffa88e5ae320e7844896" }
