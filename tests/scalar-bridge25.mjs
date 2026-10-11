@@ -16,7 +16,7 @@ functions.push({index:5,name:'vector',params:[{type:{kind:'list',element:types[0
 async function fixture(direct,run) {
  const dir=await mkdtemp(join(tmpdir(),'ink-scalar-bridge25-'));
  await copySharedHostAssets(dir);
- for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
+ for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs','pipeline-contract.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){},prepare(){throw Error('GPU disabled')},run(){throw Error('GPU disabled')}});");
  await writeFile(join(dir,'program.mjs'),"export const metadata={functions:[]};export const functions={u32:x=>x,i32:x=>x,bool:x=>x,f32:x=>x,u64:x=>x,vector:x=>x};");
  const oldFetch=globalThis.fetch,oldInstantiate=WebAssembly.instantiate;

@@ -92,6 +92,19 @@ fn assemble(
         Sha256::digest(javascript.javascript.as_bytes())
     ));
     if compute {
+        let hosts = json!([
+            ["ink-gpu.mjs", include_str!("../hosts/ink-compute.mjs")],
+            ["pipeline-contract.mjs", include_str!("../hosts/pipeline-contract.mjs")],
+            ["backend-selection.mjs", include_str!("../hosts/backend-selection.mjs")],
+            ["prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs")],
+            ["ink-abi.mjs", ink_abi::PACKED_JS_SOURCE],
+            ["ink-selection.mjs", ink_abi::SELECTION_JS_SOURCE],
+            ["ink-selection.wasm.sha256", &format!("{:x}", Sha256::digest(ink_abi::SELECTION_WASM))],
+            ["pipeline-workers.mjs", include_str!("../hosts/pipeline-workers.mjs")],
+            ["pipeline-worker.mjs", include_str!("../hosts/pipeline-worker.mjs")],
+            ["ink-device.mjs", ink_lowering_gpu::COMPUTE_DEVICE_JS]
+        ]);
+        emitted.manifest["runtime_host_sha256"] = json!(format!("{:x}", Sha256::digest(hosts.to_string().as_bytes())));
         emitted.manifest["destination_abi"] = json!({
             "name":"ink-packed-into-v1", "symbol":"ink_compute_into",
             "count":"words32", "ownership":"caller-owned",
@@ -112,11 +125,11 @@ fn assemble(
     put(dir, "manifest.json", &manifest)?;
     put(dir, "program.mjs", &javascript.javascript)?;
     if compute {
-        put(
-            dir,
-            "prepared-wasm.mjs",
-            include_str!("../hosts/prepared-wasm.mjs"),
-        )?;
+        put(dir, "prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs"))?;
+        put(dir, "pipeline-profile.mjs", include_str!("../hosts/pipeline-profile.mjs"))?;
+        put(dir, "pipeline-contract.mjs", include_str!("../hosts/pipeline-contract.mjs"))?;
+        put(dir, "pipeline-workers.mjs", include_str!("../hosts/pipeline-workers.mjs"))?;
+        put(dir, "pipeline-worker.mjs", include_str!("../hosts/pipeline-worker.mjs"))?;
     }
     put(dir, "ink-selection.mjs", ink_abi::SELECTION_JS_SOURCE)?;
     put(dir, "ink-selection.wasm", ink_abi::SELECTION_WASM)?;
@@ -333,3 +346,17 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
 
 /// Plain handle/buffer ABI appended to standalone representation applications.
 pub const REPRESENTATION_ABI_SOURCE: &str = ink_native_support::REPRESENTATION_EXPORTS_RUST_SOURCE;
+/// Distribution supplies the independent planner asset; runtime contains no search.
+pub fn install_pipeline_planner(dir: &Path, javascript: &str) -> LangResult<()> {
+    let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("manifest.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    if manifest["runtime_abi"] == "ink-packed-pipeline-v2" {
+        put(dir, "pipeline-selection.mjs", javascript)?;
+        manifest["pipeline_planner_sha256"] = json!(format!("{:x}", Sha256::digest(javascript.as_bytes())));
+        let encoded = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+        put(dir, "manifest.json", &encoded)?;
+        let assets = fs::read_to_string(dir.join("native/src/assets.rs")).map_err(|e| e.to_string())?;
+        let (_, remaining) = assets.split_once('\n').ok_or("invalid native assets")?;
+        put(dir, "native/src/assets.rs", format!("pub const MANIFEST:&str={encoded:?};\n{remaining}"))?;
+    }
+    Ok(())
+}
