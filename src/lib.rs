@@ -1,4 +1,4 @@
-//! Backend-neutral execution assembly, scheduling, profiling and fallback.
+//! Backend-neutral execution assembly, scheduling, saved-model decisions and fallback.
 use ink_core::{core, syntax::*, LangResult};
 use ink_lowering_c::native;
 use serde_json::json;

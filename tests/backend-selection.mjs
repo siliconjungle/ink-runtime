@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSelector} from '../hosts/backend-selection.mjs';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+// Resolve fixtures from the exact shared dependency, including in independent CI.
+execFileSync(process.env.CARGO??'cargo',['run','--locked','--manifest-path',fileURLToPath(new URL('../Cargo.toml',import.meta.url)),'--example','host-test-assets'],{stdio:'pipe'});
+const {createSelector}=await import('../hosts/backend-selection.mjs');
 const costProfile={schema:1,target_key:'test-device',models:{kernel:{boundary:'captured-owned',domains:{input_elements:[0,65536],input_bytes:[0,262144]},backends:{cpu:{intercept_ns:100,terms:{input_elements:10}},javascript:{intercept_ns:20,terms:{input_elements:20}},gpu:{intercept_ns:1000,terms:{input_elements:1}}}}}};
 test('adaptive saved profiles choose by size without probing or reading the timer',async()=>{
  const calls={cpu:0,javascript:0,gpu:0},prepared={cpu:0,javascript:0,gpu:0};
