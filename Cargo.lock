@@ -86,7 +86,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=dfd541c3761086e9c2f3d898643ec158ca81806b#dfd541c3761086e9c2f3d898643ec158ca81806b"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=1aff21edfa2d51713237ba033d5dc00803e19d92#1aff21edfa2d51713237ba033d5dc00803e19d92"
 dependencies = [
  "ink-core",
  "serde_json",
