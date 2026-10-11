@@ -125,7 +125,7 @@ source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=3c1439aab78
 dependencies = [
  "ink-abi",
  "ink-core",
- "ink-native-support",
+ "ink-native-support 0.1.0 (git+https://github.com/siliconjungle/ink-native-support?rev=a1e4cf6eba434bf9c47e089afe297e77aaa067e5)",
  "num-bigint",
  "serde",
  "serde_json",
@@ -148,6 +148,11 @@ version = "0.1.0"
 source = "git+https://github.com/siliconjungle/ink-native-support?rev=a1e4cf6eba434bf9c47e089afe297e77aaa067e5#a1e4cf6eba434bf9c47e089afe297e77aaa067e5"
 
 [[package]]
+name = "ink-native-support"
+version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-native-support?rev=d925f534fb650eefc856a08dd796929a933657ba#d925f534fb650eefc856a08dd796929a933657ba"
+
+[[package]]
 name = "ink-runtime"
 version = "0.1.0"
 dependencies = [
@@ -157,7 +162,7 @@ dependencies = [
  "ink-lowering-gpu",
  "ink-lowering-js",
  "ink-lowering-wasm",
- "ink-native-support",
+ "ink-native-support 0.1.0 (git+https://github.com/siliconjungle/ink-native-support?rev=d925f534fb650eefc856a08dd796929a933657ba)",
  "serde_json",
  "sha2",
 ]
