@@ -65,6 +65,7 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=b83df4fba1ac0ef2420f5a01141382abf12494e9#b83df4fba1ac0ef2420f5a01141382abf12494e9"
 dependencies = [
  "serde",
  "serde_json",
@@ -73,6 +74,7 @@ dependencies = [
 [[package]]
 name = "ink-core"
 version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-lang?rev=499ea6ff8c9ebf171420b13de769c2ade168db02#499ea6ff8c9ebf171420b13de769c2ade168db02"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -84,6 +86,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=e21584d2740a6caf476579f647220fa6258393f4#e21584d2740a6caf476579f647220fa6258393f4"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -93,6 +96,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=a4dc39b381e9ef5209192eb06313c24b967ae04c#a4dc39b381e9ef5209192eb06313c24b967ae04c"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -103,6 +107,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=c5a3cb8de737d16fa4d8d38f9d20e09c5d656cb9#c5a3cb8de737d16fa4d8d38f9d20e09c5d656cb9"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -113,6 +118,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=8b6bd5a263a5ab0db3e3ae28d6518e4df30fde6f#8b6bd5a263a5ab0db3e3ae28d6518e4df30fde6f"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -122,6 +128,7 @@ dependencies = [
 [[package]]
 name = "ink-native-support"
 version = "0.1.0"
+source = "git+https://github.com/siliconjungle/ink-native-support?rev=6f7db87d92339fe9cdd1936650102f06434777be#6f7db87d92339fe9cdd1936650102f06434777be"
 
 [[package]]
 name = "ink-runtime"
@@ -291,7 +298,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "ink-lowering-rust"
-version = "0.1.0"
