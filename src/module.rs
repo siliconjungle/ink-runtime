@@ -203,7 +203,7 @@ fn emit_checked(
                     mods.push_str(&format!(
                         "#[path=\"../../{folder}/native/src/lib.rs\"] mod part{i};\n"
                     ));
-                    cases.push_str(&format!("{:?}=>{{self.part{i}.call(name,args,part{i}::Backend::parse(backend)?) }},\n",f.name));
+                    cases.push_str(&format!("{:?}=>{{if let Some(options)=options{{self.part{i}.configure_selection(options.clone())?;}}self.part{i}.call(name,args,part{i}::Backend::parse(backend)?) }},\n",f.name));
                     builds.push_str(&format!("cc::Build::new().file(\"../{folder}/native/cpu.c\").opt_level(3).compile(\"part{i}\");\n"));
                     json!({"name":f.name,"bundle":format!("{folder}/"),"gpu":true,"strategy":manifest["collection_strategy"],"fallback_reason":null})
                 } else {
@@ -224,7 +224,11 @@ fn emit_checked(
         "manifest.json",
         serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
     )?;
-    super::put(dir,"native/Cargo.toml","[package]\nname=\"ink-module-program\"\nversion=\"0.1.0\"\nedition=\"2021\"\nautolib=false\n[dependencies]\ncompiled-state={path=\"../cpu\"}\nwgpu=\"=30.0.1\"\npollster=\"0.4\"\nserde_json={version=\"1\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n")?;
+    let abi_dependency = include_str!("../hosts/native/Cargo.toml")
+        .lines()
+        .find(|line| line.starts_with("ink-abi ="))
+        .ok_or("missing shared native ABI dependency")?;
+    super::put(dir,"native/Cargo.toml","[package]\nname=\"ink-module-program\"\nversion=\"0.1.0\"\nedition=\"2021\"\nautolib=false\n[dependencies]\ncompiled-state={path=\"../cpu\"}\nwgpu=\"=30.0.1\"\npollster=\"0.4\"\nserde_json={version=\"1\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n".replace("[dependencies]\n",&format!("[dependencies]\n{abi_dependency}\n")))?;
     super::put(dir, "native/build.rs", format!("fn main(){{{builds}}}"))?;
     let code=format!("{mods}\nstruct GpuEngines{{{fields}}}impl GpuEngines{{fn new()->Self{{Self{{{init}}}}} fn call(&mut self,name:&str,args:&serde_json::Value,backend:&str,options:Option<&serde_json::Value>)->Result<serde_json::Value,String>{{match name{{{cases}_=>Err(\"CPU-only function\".into())}}}}}}\n{}",include_str!("../hosts/native/module-main.rs"));
     super::put(dir, "native/src/state-cli.rs", super::NATIVE_STATE_CLI)?;
@@ -237,10 +241,18 @@ mod tests {
     use serde_json::json;
     #[test]
     fn graph_only_gpu_entries_are_eligible_in_mixed_modules() {
-        assert!(gpu_entry_eligible(&json!({"shader":null,"graph_required":true,"graph":{"nodes":[{"shader":"fold.wgsl"}]}})));
-        assert!(gpu_entry_eligible(&json!({"shader":"map.wgsl","graph":null})));
-        assert!(!gpu_entry_eligible(&json!({"shader":null,"graph":null,"fallback_reason":"unsupported carrier"})));
-        assert!(gpu_entry_eligible(&json!({"gpu":{"aggregate":"sum","list_param":0,"stages":[]}})));
+        assert!(gpu_entry_eligible(
+            &json!({"shader":null,"graph_required":true,"graph":{"nodes":[{"shader":"fold.wgsl"}]}})
+        ));
+        assert!(gpu_entry_eligible(
+            &json!({"shader":"map.wgsl","graph":null})
+        ));
+        assert!(!gpu_entry_eligible(
+            &json!({"shader":null,"graph":null,"fallback_reason":"unsupported carrier"})
+        ));
+        assert!(gpu_entry_eligible(
+            &json!({"gpu":{"aggregate":"sum","list_param":0,"stages":[]}})
+        ));
         assert!(!gpu_entry_eligible(&json!({})));
     }
 }

@@ -87,7 +87,10 @@ fn assemble(
     let javascript = ink_lowering_js::lower(checked)?;
     let mut emitted = ink_lowering_gpu::gpu::lower(checked)?;
     emitted.manifest["javascript"] = javascript.manifest.clone();
-    emitted.manifest["javascript_sha256"] = json!(format!("{:x}", Sha256::digest(javascript.javascript.as_bytes())));
+    emitted.manifest["javascript_sha256"] = json!(format!(
+        "{:x}",
+        Sha256::digest(javascript.javascript.as_bytes())
+    ));
     if compute {
         emitted.manifest["destination_abi"] = json!({
             "name":"ink-packed-into-v1", "symbol":"ink_compute_into",
@@ -109,7 +112,11 @@ fn assemble(
     put(dir, "manifest.json", &manifest)?;
     put(dir, "program.mjs", &javascript.javascript)?;
     if compute {
-        put(dir, "prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs"))?;
+        put(
+            dir,
+            "prepared-wasm.mjs",
+            include_str!("../hosts/prepared-wasm.mjs"),
+        )?;
     }
     put(dir, "ink-selection.mjs", ink_abi::SELECTION_JS_SOURCE)?;
     put_bytes(dir, "ink-selection.wasm", ink_abi::SELECTION_WASM)?;
@@ -320,4 +327,6 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
 
 pub mod representation;
 
-fn put_bytes(dir:&Path,name:&str,bytes:&[u8])->LangResult<()>{fs::write(dir.join(name),bytes).map_err(|e|e.to_string())}
+fn put_bytes(dir: &Path, name: &str, bytes: &[u8]) -> LangResult<()> {
+    fs::write(dir.join(name), bytes).map_err(|e| e.to_string())
+}
