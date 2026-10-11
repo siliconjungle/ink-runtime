@@ -18,6 +18,8 @@ fn run() -> Result<(), String> {
             .map_err(|e| e.to_string())
     };
     let mut engine = Engine::new();
+    let cost_profile=if let Some(path)=option("--cost-profile").map(String::as_str){serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?}else{serde_json::Value::Null};
+    engine.configure_selection(serde_json::json!({"cost_profile":cost_profile,"target_key":option("--target-key").map(String::as_str).unwrap_or(""),"policy":option("--policy").map(String::as_str).unwrap_or("adaptive"),"static_backend":option("--static-backend").map(String::as_str).unwrap_or("cpu")}))?;
     if let Some(path) = option("--script") {
         let script = read(path)?;
         for call in script.as_array().ok_or("script must be an array")? {

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 [dependencies]
+ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "841a1898ea1c6e8c69845b94aa5f1c79a151d55f" }
 wgpu = "=30.0.1"
 pollster = "0.4"
 serde_json = { version = "1", features = ["float_roundtrip"] }
