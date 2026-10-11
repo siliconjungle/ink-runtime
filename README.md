@@ -1,12 +1,12 @@
 # Ink runtime
 
-Shared execution orchestration for [Ink](https://github.com/siliconjungle/ink-lang). Backend-neutral checked-graph execution, scheduling, profiling, bundle assembly, CPU fallback and host ABIs live here. Search lives in [ink-planner](https://github.com/siliconjungle/ink-planner); semantics and proof authority stay in `ink-core`.
+Shared execution orchestration for [Ink](https://github.com/siliconjungle/ink-lang). Backend-neutral checked-graph execution, scheduling, common decision application, bundle assembly, CPU fallback and host ABIs live here. Search lives in [ink-planner](https://github.com/siliconjungle/ink-planner); semantics and proof authority stay in `ink-core`.
 
 `execution::execute` accepts only the core's immutable checked source-routing witness, captures and validates original inputs before invoking adapters, composes typed results, and falls back by repeating the same pure stage. `execution::Adapter` registers execution providers under opaque package/domain names. Adapter registration, generated code and physical bridges remain host trust decisions; typed output validation is not a backend correctness proof. Stateful/effectful stages are not speculatively replayed.
 
 `emit_gpu`, `emit_selected` and `emit_routed` assemble target artifacts with C CPU fallback and versioned browser/native hosts. WGSL emission and WebGPU/wgpu device operations remain in `ink-lowering-gpu`, which has no dependency on the C lowerer or runtime. The device package supplies adapters for `ink-scalar-pipeline-v1` and `ink-packed-pipeline-v2`; native device code consumes the host's typed ABI, and browser adapters receive its codecs and limits explicitly. The generated bundle pins target/toolchain dependencies and shader/CPU identities.
 
-`hosts/` owns both browser and native scheduling, profiling and fallback. Whole-call/pipeline measurements include upload, allocation, dispatch and readback; setup is amortised over bounded reuse. Device loss, unsupported capabilities and driver validation failures retain compiled CPU execution. GPU residency within supported pipelines stays under device-adapter control. Cross-function scalar routes currently transport word/Bool/list values through the host; packed compute pipelines provide resident array composition. Broader bridge protocols must be implemented and checked explicitly.
+`hosts/` owns both browser and native scheduling, decision application and fallback. Offline cost observations cover complete calls, including upload, allocation, dispatch and readback. The planner fits scope-bound models; hosts execute one decision from the shared ABI contract. Device loss, unsupported capabilities and driver validation failures retain compiled CPU execution. GPU residency within supported pipelines stays under device-adapter control. Cross-function scalar routes currently transport word/Bool/list values through the host; packed compute pipelines provide resident array composition. Broader bridge protocols must be implemented and checked explicitly.
 
 `toolchain::wasm` invokes the Wasm target configuration from `ink-lowering-wasm`. The Wasm state host adapter also lives here; Rust/LLVM remains the state target compiler. Runtime scheduling never grants proof authority, and measured profitability is not a mathematical premise.
 
@@ -21,13 +21,14 @@ one chosen execution and no online trials. Without comparable CPU/alternative
 profile evidence it retains the compiled CPU baseline. `policy:'static'` fixes
 `staticBackend:'cpu'|'javascript'|'gpu'`; explicit backend requests override the
 policy. Static JS calls avoid packed transport and Wasm initialization.
-`policy:'profile'` explicitly enables the historical bounded alternating trials
-for pure training calls, including conversions, transfers and materialization.
-It is not used for stateful actions or explicit destination calls. Profile caches
-hold at most32 decisions; availability/device loss clears or changes decisions.
-Measurements never establish correctness, valid types, ranges or source equality.
-The profile is copied/bound once, and its component estimates are untrusted
-profitability data. Native wgpu bundles continue to use their C CPU path.
+Both native and browser hosts use `ink-abi`'s single decision implementation;
+browser hosts execute its Rust through Wasm. Workload feature aggregation also
+uses that implementation. Online profiling/trial policy has been removed.
+Measurements and fitted profiles belong in knowledge and planner tooling.
+Profiles bind the target, exact code scope, transport boundary and observed domain.
+They never establish correctness, valid types, ranges or source equality.
+Native wgpu bundles execute their C CPU fallback. An unavailable candidate or
+runtime/device failure retains CPU execution.
 Mixed modules expose complete Wasm state execution and explicit JavaScript state instances. Stateful actions never enter speculative selection. Per-stage adaptive JS/Wasm/GPU placement remains future work.
 
 The JavaScript value ABI trusts the caller, like native compiled code: arguments
@@ -87,14 +88,16 @@ reassociation or automatic stage fusion is introduced. Graph feedback and
 unsupported shapes retain CPU fallback. Actual dispatches, transfers and live
 buffers are reported separately from capability metadata.
 
-Run browser policy checks with `node --test tests/backend-selection.mjs`.
+Generate shared host assets with `cargo run --example host-test-assets`, then run
+`node --test tests/backend-selection.mjs`. Native/browser policy and packed ABI
+conformance is also tested in the pinned `ink-abi` repository.
 
 `emit_c_program` and `emit_rust_program` assemble complete literal programs with
 primitive values, transaction publication, portable snapshot codecs and a shared
 native/Wasm handle/buffer ABI. C emission uses shared Rust primitives; generated
 programs contain no Ink parser or AST evaluator. `toolchain::complete_program`
 builds native executables or Wasm modules. `module` extracts GPU-eligible pure
-closures from mixed programs and retains persistent device/profile engines.
+closures from mixed programs and retains persistent device engines.
 The C header is `hosts/state-abi.h`; browser Wasm support is `hosts/state-wasm.mjs`.
 
 `hosts/durable-state.mjs` provides serialized durable calls and bounded retry

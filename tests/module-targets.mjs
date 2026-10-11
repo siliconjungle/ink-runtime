@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 
 test('mixed native package ignores a preserved stale pure-library target',()=>{
   const source=readFileSync(new URL('../src/module.rs',import.meta.url),'utf8');
-  const literal=source.match(/super::put\(dir,"native\/Cargo.toml",("(?:[^"\\]|\\.)*")\)/)[1];
+  const literal=source.match(/super::put\(dir,\s*"native\/Cargo.toml",\s*("(?:[^"\\]|\\.)*")/)[1];
   // Use the actual generated package section. Dependencies do not influence
   // target discovery, and omitting them keeps this regression offline.
   const manifest=JSON.parse(literal).split('[dependencies]')[0]+'[workspace]\n';

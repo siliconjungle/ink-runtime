@@ -1,5 +1,5 @@
 //! Standalone native host: generated C CPU code, the same WGSL as the browser,
-//! and bounded measured selection. No Ink AST interpreter is linked.
+//! and bounded saved-model selection. No Ink AST interpreter is linked.
 mod assets;
 use serde_json::{json, Value};
 use std::{
@@ -20,22 +20,8 @@ extern "C" {
         scalars: *const u64,
     ) -> u64;
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    Auto,
-    Cpu,
-    Gpu,
-}
-impl Backend {
-    pub fn parse(s: &str) -> Result<Self> {
-        match s {
-            "auto" => Ok(Self::Auto),
-            "cpu" => Ok(Self::Cpu),
-            "gpu" => Ok(Self::Gpu),
-            _ => Err("backend must be auto, cpu or gpu".into()),
-        }
-    }
-}
+mod backend;
+pub use backend::Backend;
 #[derive(Clone)]
 enum Arg {
     Scalar(u64),
@@ -117,63 +103,13 @@ fn list<'a>(f: &Value, args: &'a [Arg]) -> Result<&'a [u32]> {
         _ => Err("GPU needs u32 list".into()),
     }
 }
-fn key(f: &Value, args: &[Arg]) -> Result<String> {
-    let xs = list(f, args)?;
-    let n = xs.len();
-    let mut zero = 0;
-    let mut high = 0;
-    let mut count = 0;
-    for x in xs.iter().step_by((n / 64).max(1)).take(64) {
-        zero += (*x == 0) as usize;
-        high += (*x >= 0x80000000) as usize;
-        count += 1;
-    }
-    let scalars: Vec<_> = args
-        .iter()
-        .filter_map(|a| {
-            if let Arg::Scalar(n) = a {
-                Some(*n)
-            } else {
-                None
-            }
-        })
-        .collect();
-    Ok(json!([
-        f["index"],
-        if n == 0 { 0 } else { n.ilog2() },
-        zero * 4 / count.max(1),
-        high * 4 / count.max(1),
-        scalars
-    ])
-    .to_string())
-}
-#[derive(Clone)]
-struct Profile {
-    cpu_ms: f64,
-    gpu_ms: f64,
-    setup_ms: f64,
-    uses: usize,
-    gpu: bool,
-}
-impl Profile {
-    fn json(&self) -> Value {
-        json!({"cpu_ms":self.cpu_ms,"gpu_ms":self.gpu_ms,"gpu_setup_ms":self.setup_ms,"expected_calls":32,"uses":self.uses})
-    }
-}
-fn ms(t: Instant) -> f64 {
-    t.elapsed().as_secs_f64() * 1000.0
-}
-fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(f64::total_cmp);
-    v[v.len() / 2]
-}
-
+fn ms(t:Instant)->f64{t.elapsed().as_secs_f64()*1000.0}
 pub struct Engine {
     manifest: Value,
     gpu: Option<Gpu>,
     gpu_error: Option<String>,
     disabled: BTreeMap<u64, String>,
-    profiles: BTreeMap<String, Profile>,
+    selection_options: Value,
 }
 impl Engine {
     pub fn new() -> Self {
@@ -182,9 +118,10 @@ impl Engine {
             gpu: None,
             gpu_error: None,
             disabled: BTreeMap::new(),
-            profiles: BTreeMap::new(),
+            selection_options: json!({}),
         }
     }
+    pub fn configure_selection(&mut self,options:Value)->Result<()>{ink_abi::selection::decide(&options,&json!({}),&["cpu".into()])?;self.selection_options=options;Ok(())}
     pub fn manifest(&self) -> &Value {
         &self.manifest
     }
@@ -266,7 +203,8 @@ impl Engine {
         self.call_prepared(&f, &args, backend)
     }
     fn call_prepared(&mut self, f: &Value, args: &[Arg], backend: Backend) -> Result<Value> {
-        let output = |value: u64, backend: &str, reason: String, profile: Option<&Profile>| json!({"value":if f["result"]=="bool" {json!(value!=0)}else{json!(value)},"backend":backend,"reason":reason,"profile":profile.map(Profile::json)});
+        let output = |value:u64,backend:&str,reason:String,profile:Option<&Value>|json!({"value":if f["result"]=="bool"{json!(value!=0)}else{json!(value)},"backend":backend,"reason":reason,"profile":profile});
+        if backend==Backend::GpuRequired && f["gpu"].is_null(){return Err(f["cpu_reason"].as_str().unwrap_or("CPU-only function").into());}
         if backend == Backend::Cpu || f["gpu"].is_null() {
             return Ok(output(
                 cpu(&f, &args),
@@ -282,100 +220,17 @@ impl Engine {
                 None,
             ));
         }
-        let key = key(&f, &args)?;
-        let selected = (|| -> Result<(u64, bool, String, Option<Profile>)> {
-            let setup_start = Instant::now();
-            self.prepare(&f, &args)?;
-            let setup_ms = ms(setup_start);
-            if backend == Backend::Gpu {
-                return Ok((
-                    self.gpu.as_mut().unwrap().execute(&f, &args)?,
-                    true,
-                    "explicit GPU selection".into(),
-                    None,
-                ));
-            }
-            let stale = self.profiles.get(&key).is_none_or(|p| p.uses >= 32);
-            if stale {
-                let mut cpu_times = Vec::new();
-                let mut gpu_times = Vec::new();
-                for trial in 0..3 {
-                    let (reference, result);
-                    if trial % 2 == 0 {
-                        let t = Instant::now();
-                        reference = cpu(&f, &args);
-                        cpu_times.push(ms(t));
-                        let t = Instant::now();
-                        result = self.gpu.as_mut().unwrap().execute(&f, &args)?;
-                        gpu_times.push(ms(t));
-                    } else {
-                        let t = Instant::now();
-                        result = self.gpu.as_mut().unwrap().execute(&f, &args)?;
-                        gpu_times.push(ms(t));
-                        let t = Instant::now();
-                        reference = cpu(&f, &args);
-                        cpu_times.push(ms(t));
-                    }
-                    if reference != result {
-                        return Err("GPU/compiled CPU result mismatch".into());
-                    }
-                }
-                let cpu_ms = median(cpu_times);
-                let gpu_ms = median(gpu_times);
-                if self.profiles.len() >= 32 && !self.profiles.contains_key(&key) {
-                    let oldest = self.profiles.keys().next().cloned().unwrap();
-                    self.profiles.remove(&oldest);
-                }
-                self.profiles.insert(
-                    key.clone(),
-                    Profile {
-                        cpu_ms,
-                        gpu_ms,
-                        setup_ms,
-                        uses: 0,
-                        gpu: gpu_ms + setup_ms / 32.0 < cpu_ms * 0.9,
-                    },
-                );
-            }
-            let profile = self.profiles.get_mut(&key).unwrap();
-            profile.uses += 1;
-            let profile = profile.clone();
-            let value = if profile.gpu {
-                self.gpu.as_mut().unwrap().execute(&f, &args)?
-            } else {
-                cpu(&f, &args)
-            };
-            Ok((
-                value,
-                profile.gpu,
-                "measured full execution cost with setup amortisation and 10% minimum saving"
-                    .into(),
-                Some(profile),
-            ))
-        })();
-        match selected {
-            Ok((value, gpu, reason, profile)) => Ok(output(
-                value,
-                if gpu { "gpu" } else { "cpu" },
-                reason,
-                profile.as_ref(),
-            )),
-            Err(e) => {
-                self.profiles.remove(&key);
-                // Cache failed shader/device decisions per function. A fresh Engine
-                // can retry after a host/device change; no application state exists.
-                if !e.contains("limits") && !e.contains("budget") {
-                    self.disabled
-                        .insert(f["index"].as_u64().unwrap(), e.clone());
-                }
-                Ok(output(
-                    cpu(&f, &args),
-                    "cpu",
-                    format!("GPU fallback: {e}"),
-                    None,
-                ))
-            }
+        let scope=json!([self.manifest["core_sha256"],self.manifest["cpu_c_sha256"],self.manifest["javascript_sha256"],f["name"]]).to_string();
+        let inputs=args.iter().enumerate().map(|(i,a)|match a{Arg::Scalar(_)=>json!({"list":false,"count":1,"bytes":if f["params"][i]["type"]=="u64"{8}else{4}}),Arg::U32List(xs)=>json!({"list":true,"count":xs.len(),"bytes":xs.len()*4}),Arg::U64List(xs)=>json!({"list":true,"count":xs.len(),"bytes":xs.len()*8})}).collect::<Vec<_>>();
+        let features=ink_abi::selection::features(&json!({"inputs":inputs,"outputs":[1],"stages":[{"dispatches":1}],"iterations":1}))?;
+        let decision=ink_abi::selection::decide(&self.selection_options,&json!({"scope":scope,"boundary":"captured-owned","features":features}),&["cpu".into(),"gpu".into()])?;
+        if backend==Backend::Auto&&decision["backend"]=="cpu"{return Ok(output(cpu(f,args),"cpu",decision["reason"].as_str().unwrap().into(),Some(&decision)));}
+        let selected=(||{self.prepare(f,args)?;self.gpu.as_mut().unwrap().execute(f,args)})();
+        match selected{
+            Ok(value)=>Ok(output(value,"gpu",if matches!(backend,Backend::Gpu|Backend::GpuRequired){"explicit GPU selection".into()}else{decision["reason"].as_str().unwrap().into()},Some(&decision))),
+            Err(e)=>{if backend==Backend::GpuRequired{return Err(e);}if !e.contains("limits")&&!e.contains("budget"){self.disabled.insert(f["index"].as_u64().unwrap(),e.clone());}Ok(output(cpu(f,args),"cpu",format!("GPU fallback: {e}"),None))}
         }
+
     }
 }
 impl Default for Engine {

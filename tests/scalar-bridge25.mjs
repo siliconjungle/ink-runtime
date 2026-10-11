@@ -1,3 +1,4 @@
+import {copySharedHostAssets} from './shared-host-assets.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,copyFile,writeFile,rm} from 'node:fs/promises';
@@ -14,9 +15,10 @@ functions.push({index:5,name:'vector',params:[{type:{kind:'list',element:types[0
 // interpreter; compiled Wasm bundles are validated by the integration run.
 async function fixture(direct,run) {
  const dir=await mkdtemp(join(tmpdir(),'ink-scalar-bridge25-'));
+ await copySharedHostAssets(dir);
  for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){},prepare(){throw Error('GPU disabled')},run(){throw Error('GPU disabled')}});");
- await writeFile(join(dir,'program.mjs'),"export const functions={u32:x=>x,i32:x=>x,bool:x=>x,f32:x=>x,u64:x=>x,vector:x=>x};");
+ await writeFile(join(dir,'program.mjs'),"export const metadata={functions:[]};export const functions={u32:x=>x,i32:x=>x,bool:x=>x,f32:x=>x,u64:x=>x,vector:x=>x};");
  const oldFetch=globalThis.fetch,oldInstantiate=WebAssembly.instantiate;
  const memory=new WebAssembly.Memory({initial:2});let top=64,failNext=false;
  const counts={allocations:[],generic:0,word32:0,word64:0,resets:0};
@@ -32,7 +34,7 @@ async function fixture(direct,run) {
   exports.ink_compute_scalar64=(index,table)=>{counts.word64++;assert.equal(index,4);const a=words(table,index);return BigInt.asIntN(64,BigInt(a[0])|(BigInt(a[1])<<32n));};
  }
  globalThis.fetch=async url=>String(url).endsWith('manifest.json')?{json:async()=>({schema:2,core_sha256:'transport-fixture25',functions})}:{arrayBuffer:async()=>new ArrayBuffer(0)};
- WebAssembly.instantiate=async()=>({instance:{exports}});
+ WebAssembly.instantiate=async(...args)=>args[0]?.byteLength?oldInstantiate(...args):({instance:{exports}});
  try{
   const {loadInk}=await import(pathToFileURL(join(dir,'ink-compute.mjs')));
   const runtime=await loadInk(pathToFileURL(`${dir}/`),{gpu:false,backend:'cpu'});

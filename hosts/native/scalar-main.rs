@@ -27,6 +27,8 @@ fn run() -> Result<(), String> {
     let input = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
     let input: serde_json::Value = serde_json::from_slice(&input).map_err(|e| e.to_string())?;
     let mut engine = Engine::new();
+    let cost_profile=if let Some(path)=option("--cost-profile")?{serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?}else{serde_json::Value::Null};
+    engine.configure_selection(serde_json::json!({"cost_profile":cost_profile,"target_key":option("--target-key")?.unwrap_or(""),"policy":option("--policy")?.unwrap_or("adaptive"),"static_backend":option("--static-backend")?.unwrap_or("cpu")}))?;
     if args[0] == "--route-script" {
         let mut results = Vec::new();
         for args in input.as_array().ok_or("route script must be an array")? {
