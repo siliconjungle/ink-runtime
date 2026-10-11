@@ -1,4 +1,0 @@
-#include <stdio.h>
-static int host_read(uint32_t*out){unsigned char bytes[4];size_t n=fread(bytes,1,4,stdin);if(!n)return 0;if(n!=4)return -1;*out=(uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);return 1;}
-static int host_write(uint32_t word){unsigned char bytes[4]={(unsigned char)word,(unsigned char)(word>>8),(unsigned char)(word>>16),(unsigned char)(word>>24)};return fwrite(bytes,1,4,stdout)==4;}
-int main(void){uint32_t function,length;for(;;){int status=host_read(&function);if(!status)return 0;if(status<0||host_read(&length)!=1||length>4*1024*1024)return 1;uint32_t*input=ink_definition_input();for(uint32_t i=0;i<length;i++)if(host_read(input+i)!=1)return 1;uint32_t output=ink_definition_call(function,input,length);if(!host_write(output))return 1;const uint32_t*words=ink_definition_result();for(uint32_t i=0;i<output;i++)if(!host_write(words[i]))return 1;if(fflush(stdout))return 1;}}
