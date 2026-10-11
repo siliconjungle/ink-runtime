@@ -134,3 +134,15 @@ test('prepared GPU output selection captures caller plan before queued preparati
   await prepared.close();
  },{gpu:true});
 });
+
+test('adaptive JS reuses its private U32 capture and retains packed-host owned Array outputs',async()=>{
+ const scope=JSON.stringify(['fixture',null,null,'identity']);
+ const profile={schema:1,target_key:'test',models:{[scope]:{boundary:'captured-owned',domains:{input_elements:[0,100]},backends:{cpu:{intercept_ns:1000,terms:{}},javascript:{intercept_ns:10,terms:{}}}}}};
+ await fixture(async(runtime,cpuCalls,wasmLoads)=>{
+  const xs=Uint32Array.of(0,4294967295);const pending=runtime.call('identity',[xs]);xs.fill(99);
+  const a=(await pending).value;assert.ok(Array.isArray(a));assert.deepEqual(a,[0,4294967295]);
+  await runtime.call('identity',[Uint32Array.of(7)]);assert.deepEqual(a,[0,4294967295]);
+  a[0]=8;assert.deepEqual((await runtime.call('identity',[Uint32Array.of(0,4294967295)])).value,[0,4294967295]);
+  assert.equal(cpuCalls(),0);assert.equal(wasmLoads(),0);await runtime.close();assert.deepEqual(a,[8,4294967295]);
+ },{backend:'auto',policy:'adaptive',targetKey:'test',costProfile:profile});
+});

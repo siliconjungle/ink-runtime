@@ -44,11 +44,16 @@ native values between stages rather than packing, unpacking and recapturing each
 intermediate result. They remain serialized, so callers must keep borrowed
 JavaScript inputs stable until the returned promise settles. Wasm/GPU calls still
 snapshot inputs for transport; flat U32 typed arrays use one bulk clone. CPU
-fallback loads lazily when needed. Graph configuration, device limits and result
+fallback loads lazily when needed. Captured automatic U32 JavaScript calls reuse
+the private typed transport snapshot as a native list; they do not unpack a
+second input array. Packed-host identity results still become fresh public
+Arrays, and explicit JavaScript identity calls retain their borrowed-input
+contract. Typed logical lengths, shared inputs and caller mutation after
+submission retain the same captured semantics. Graph configuration, device limits and result
 layout invariants remain host responsibilities. The packed host retains its
 JSON-compatible U64 output convention (safe Number, otherwise decimal string).
 
-Run browser checks with `node --test tests/backend-selection.mjs tests/lean-javascript.mjs`.
+Run browser checks with `node --test tests/backend-selection.mjs tests/lean-javascript.mjs tests/transport40.mjs`.
 
 Explicit packed CPU calls bind the function directly and marshal its arguments
 without building a pipeline or profiling key. Pipeline reference detection
@@ -63,7 +68,15 @@ from `run()`. `writeArgument` updates reserved packed inputs; `close` releases
 the call. Capacity, declared types, eight-byte packed alignment, nonaliasing and
 borrowed view lifetimes are trusted caller obligations. Scratch allocations are
 rewound to a saved mark on every prepared run. Ordinary calls preserve their
-existing result behavior. See the distribution's
+existing result behavior. Terminal CPU results decode into owned host values
+before the arena resets; their intermediate packed clone is omitted. Pipeline
+outputs decode on the final iteration, while only later stage uses and feedback
+retain owned packed intermediates across resets. CPU destination decoding writes
+directly into the caller's output prefix without an intermediate result Array.
+U64 native bridge decoding produces BigInt in one pass; JSON-compatible public
+U64 values still use safe Numbers or decimal strings. Generic packing fills its
+final typed word allocation directly. These are fixed transport/lifetime rules,
+not source-specific rewrites or mathematical proof admission. See the distribution's
 `docs/web-engine-storage-and-contexts.md` for the full ownership and trust
 boundary; the physical lowering is tested, not certified machine code.
 

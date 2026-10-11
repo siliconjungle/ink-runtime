@@ -12,8 +12,7 @@ function argumentsFor(f,args){
     const inner=t.slice(5);
     if(inner==='u32'&&v instanceof Uint32Array)return v.slice();
     if(inner==='u64'&&v instanceof BigUint64Array)return v.slice();
-    const values=Array.from(v,x=>word(x,inner));
-    return inner==='u32'?new Uint32Array(values):new BigUint64Array(values);
+    return inner==='u32'?Uint32Array.from(v):BigUint64Array.from(v,x=>word(x,inner));
   });
 }
 function profileKey(f,args){
