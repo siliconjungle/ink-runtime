@@ -42,7 +42,19 @@ fn encode_value(
     let inner = |t, v| encode_value(c, p, t, v, depth + 1);
     Ok(match (t, v) {
         (Type::U64, Value::U64(x)) => Term::U64(*x),
+        (Type::F32,Value::F32(bits))=>Term::U64(*bits as u64),
+        (Type::U32, Value::U32(x)) => Term::U64(*x as u64),
+        (Type::I32, Value::I32(x)) => Term::U64(*x as u32 as u64),
+        (Type::Int, Value::Int(x)) => {
+            let integer=type_id(c,t)?;let natural=natural_id(c,integer)?;
+            let (_,bytes)=x.to_bytes_le();let bits=x.bits() as usize;
+            if bits>4090 {return Err("representation Int magnitude limit".into());}
+            let mut tail=construct(natural,0,vec![]);
+            for bit in (0..bits).rev(){tail=construct(natural,if bytes[bit/8]&(1<<(bit%8))==0{1}else{2},vec![tail]);}
+            if bits==0 {construct(integer,0,vec![])}else{construct(integer,if x.sign()==num_bigint::Sign::Minus{2}else{1},vec![tail])}
+        },
         (Type::Bool, Value::Bool(x)) => Term::Bool(*x),
+        (Type::Vector(element,n),Value::Vector(xs))=>{if xs.len()!=*n as usize{return Err("vector length".into());}construct(type_id(c,t)?,0,xs.iter().map(|x|inner(element,x)).collect::<LangResult<Vec<_>>>()?)},
         (Type::List(t0), Value::List(xs)) => {
             if xs.len() > 4096 {
                 return Err("representation list value limit".into());
@@ -101,12 +113,24 @@ pub fn decode(c: &CheckedRepresentation, t: &Type, value: &Term) -> LangResult<J
         let p = c.module().program();
         match (t, value) {
             (Type::U64, Term::U64(x)) => return Ok((*x).into()),
+            (Type::U32, Term::U64(x)) if *x<=u32::MAX as u64 => return Ok((*x).into()),
+            (Type::I32, Term::U64(x)) if *x<=u32::MAX as u64 => return Ok((*x as u32 as i32).into()),
+            (Type::F32,Term::U64(bits))if *bits<=u32::MAX as u64=>return Ok(Value::F32(*bits as u32).json()),
             (Type::Bool, Term::Bool(x)) => return Ok((*x).into()),
             _ => {}
         }
         let (tag, args) = data(value, type_id(c, t)?)?;
         let inner = |t, v| go(c, t, v, d + 1);
         Ok(match t {
+            Type::Int => {
+                if tag==0 && args.is_empty(){return Ok(serde_json::json!({"Int":"0"}));}
+                if !(1..=2).contains(&tag)||args.len()!=1{return Err("integer carrier".into());}
+                let natural=natural_id(c,type_id(c,t)?)?;let mut cursor=&args[0];let mut magnitude=num_bigint::BigUint::from(0u8);let mut bits=0;
+                loop{let (tag,args)=data(cursor,natural)?;match(tag,args){(0,[])=>break,(1|2,[tail])if bits<4090=>{if tag==2{magnitude|=num_bigint::BigUint::from(1u8)<<bits;}bits+=1;cursor=tail;},_=>return Err("integer magnitude carrier/limit".into())}}
+                if magnitude.bits()as usize!=bits||bits==0{return Err("noncanonical integer magnitude".into());}
+                let n=num_bigint::BigInt::from_biguint(if tag==2{num_bigint::Sign::Minus}else{num_bigint::Sign::Plus},magnitude);serde_json::json!({"Int":n.to_string()})
+            }
+            Type::Vector(element,n)=>{if tag!=0||args.len()!=*n as usize{return Err("vector carrier".into());}Json::Array(args.iter().map(|x|go(c,element,x,d+1)).collect::<LangResult<Vec<_>>>()?)},
             Type::List(t0) => {
                 let id = type_id(c, t)?;
                 let mut cursor = value;
@@ -270,4 +294,9 @@ pub fn events(c: &CheckedRepresentation, list: &Term) -> LangResult<Vec<(usize, 
         }
     }
     Ok(out)
+}
+
+fn natural_id<'a>(c:&'a CheckedRepresentation,integer:&str)->LangResult<&'a str>{
+ let entry=c.projection().objects.get(integer).ok_or("integer datatype")?;
+ entry.payload["declaration"]["Datatype"]["constructors"][1]["fields"][0]["Data"].as_str().ok_or("binary magnitude datatype".into())
 }
