@@ -77,7 +77,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=77fadd8ea75f68348bb6803fa7039899dd918e1f#77fadd8ea75f68348bb6803fa7039899dd918e1f"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=c1d75a3f327e425ec457951d263c3c63850ef01d#c1d75a3f327e425ec457951d263c3c63850ef01d"
 dependencies = [
  "ink-core",
  "ink-lowering-rust",
@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=1fba7a0bd42af4585dbe2fbbe30c64b669737687#1fba7a0bd42af4585dbe2fbbe30c64b669737687"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=d4af48026c197a8e861a913b45bd8a6e46ffb5dc#d4af48026c197a8e861a913b45bd8a6e46ffb5dc"
 dependencies = [
  "ink-core",
  "ink-lowering-c",
@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=8f0ce56a2f5e25e674de5272135f7e0332167fce#8f0ce56a2f5e25e674de5272135f7e0332167fce"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=430c913fa4a3cb2a68e6c7f75c095523e9befe8c#430c913fa4a3cb2a68e6c7f75c095523e9befe8c"
 dependencies = [
  "ink-core",
  "serde_json",
@@ -109,7 +109,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-rust"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=25dc9f8f0bf22a182bc7c7c8ab6ae4a477ca2ebd#25dc9f8f0bf22a182bc7c7c8ab6ae4a477ca2ebd"
+source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=11492aad9e3dadfa5848fb0af3cb8ccb9f852e51#11492aad9e3dadfa5848fb0af3cb8ccb9f852e51"
 dependencies = [
  "ink-core",
  "num-bigint",
@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=34d27b23e295b331897dd06e03312d61ae4aa6db#34d27b23e295b331897dd06e03312d61ae4aa6db"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=fc9af7eb4e78cc6cb147d2807a92c46a7993a69e#fc9af7eb4e78cc6cb147d2807a92c46a7993a69e"
 dependencies = [
  "ink-core",
  "ink-lowering-c",
@@ -239,9 +239,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.152"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "1741ab7a6cc54a03a89b5d563ed60075c277d9e3cfa73ad0c1f23f23974703c6"
 dependencies = [
  "itoa",
  "memchr",
