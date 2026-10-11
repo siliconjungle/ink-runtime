@@ -11,7 +11,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Instant,
 };
 type Result<T> = std::result::Result<T, String>;
 const MAX_BYTES: usize = 256 * 1024 * 1024;
@@ -47,167 +46,7 @@ impl Backend {
         }
     }
 }
-fn width(t: &Value) -> usize {
-    match t["kind"].as_str().unwrap() {
-        "list" => width(&t["element"]),
-        "vector" => t["size"].as_u64().unwrap() as usize * width(&t["element"]),
-        "record" => t["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|f| width(&f["type"]))
-            .sum(),
-        "u64" => 2,
-        _ => 1,
-    }
-}
-#[derive(Clone)]
-struct Data {
-    words: Arc<Vec<u32>>,
-    count: usize,
-    finite: bool,
-}
-fn pack(v: &Value, t: &Value) -> Result<Data> {
-    fn go(v: &Value, t: &Value, w: &mut Vec<u32>, finite: &mut bool) -> Result<()> {
-        match t["kind"].as_str().unwrap() {
-            "list" => {
-                for x in v.as_array().ok_or("expected list")? {
-                    go(x, &t["element"], w, finite)?;
-                }
-            }
-            "vector" => {
-                let a = v.as_array().ok_or("expected vector")?;
-                if a.len() != t["size"].as_u64().unwrap() as usize {
-                    return Err("vector dimension mismatch".into());
-                }
-                for x in a {
-                    go(x, &t["element"], w, finite)?
-                }
-            }
-            "record" => {
-                let a = v.as_object().ok_or("expected record")?;
-                let fields = t["fields"].as_array().unwrap();
-                if a.len() != fields.len() {
-                    return Err("record fields mismatch".into());
-                }
-                for f in fields {
-                    go(
-                        a.get(f["name"].as_str().unwrap())
-                            .ok_or("missing record field")?,
-                        &f["type"],
-                        w,
-                        finite,
-                    )?
-                }
-            }
-            "bool" => w.push(v.as_bool().ok_or("expected Bool")? as u32),
-            "u32" => w.push(
-                u32::try_from(v.as_u64().ok_or("expected u32")?)
-                    .map_err(|_| "u32 outside range")?,
-            ),
-            "i32" => w.push(
-                i32::try_from(v.as_i64().ok_or("expected i32")?).map_err(|_| "i32 outside range")?
-                    as u32,
-            ),
-            "u64" => {
-                let n = if let Some(s) = v.as_str() {
-                    s.parse::<u64>().map_err(|_| "u64 outside range")?
-                } else {
-                    v.as_u64().ok_or("expected u64")?
-                };
-                w.push(n as u32);
-                w.push((n >> 32) as u32);
-            }
-            "f32" => {
-                let bits = if let Some(n) = v.as_f64() {
-                    let f = n as f32;
-                    if !f.is_finite() {
-                        return Err("f32 input overflow".into());
-                    }
-                    f.to_bits()
-                } else {
-                    if v.as_object().is_none_or(|o| o.len() != 1) {
-                        return Err("expected finite f32 or explicit F32Bits".into());
-                    }
-                    u32::try_from(v["F32Bits"].as_u64().ok_or("invalid F32Bits")?)
-                        .map_err(|_| "invalid F32Bits")?
-                };
-                *finite &= f32::from_bits(bits).is_finite();
-                w.push(bits);
-            }
-            _ => return Err("invalid compiled type".into()),
-        };
-        if w.len() * 4 > MAX_BYTES {
-            return Err("input exceeds 256 MiB budget".into());
-        }
-        Ok(())
-    }
-    let mut words = Vec::new();
-    let mut finite = true;
-    go(v, t, &mut words, &mut finite)?;
-    let count = if t["kind"] == "list" {
-        v.as_array().unwrap().len()
-    } else {
-        1
-    };
-    Ok(Data {
-        words: Arc::new(words),
-        count,
-        finite,
-    })
-}
-fn unpack(d: &Data, t: &Value) -> Value {
-    fn go(w: &[u32], i: &mut usize, t: &Value) -> Value {
-        match t["kind"].as_str().unwrap() {
-            "list" => Value::Array(
-                (0..w.len() / width(&t["element"]))
-                    .map(|_| go(w, i, &t["element"]))
-                    .collect(),
-            ),
-            "vector" => Value::Array(
-                (0..t["size"].as_u64().unwrap())
-                    .map(|_| go(w, i, &t["element"]))
-                    .collect(),
-            ),
-            "record" => Value::Object(
-                t["fields"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|f| (f["name"].as_str().unwrap().into(), go(w, i, &f["type"])))
-                    .collect(),
-            ),
-            "u64" => {
-                let n = w[*i] as u64 + ((w[*i + 1] as u64) << 32);
-                *i += 2;
-                if n > 9007199254740991 {
-                    json!(n.to_string())
-                } else {
-                    json!(n)
-                }
-            }
-            k => {
-                let n = w[*i];
-                *i += 1;
-                match k {
-                    "u32" => json!(n),
-                    "i32" => json!(n as i32),
-                    "bool" => json!(n != 0),
-                    "f32" => {
-                        let f = f32::from_bits(n);
-                        if f.is_finite() {
-                            json!(f)
-                        } else {
-                            json!({"F32Bits":n})
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-    }
-    go(&d.words, &mut 0, t)
-}
+use ink_abi::packed::{width,Data,pack,unpack};
 #[derive(Clone)]
 struct Ref {
     step: bool,
@@ -543,31 +382,11 @@ fn cpu(p: &Plan) -> Result<Value> {
 }
 mod device;
 use device::Gpu;
-#[derive(Clone)]
-struct Profile {
-    cpu_ms: f64,
-    gpu_ms: f64,
-    setup_ms: f64,
-    uses: usize,
-    gpu: bool,
-}
-impl Profile {
-    fn json(&self) -> Value {
-        json!({"cpu_ms":self.cpu_ms,"gpu_ms":self.gpu_ms,"setup_ms":self.setup_ms,"uses":self.uses,"gpu":self.gpu})
-    }
-}
-fn ms(t: Instant) -> f64 {
-    t.elapsed().as_secs_f64() * 1000.0
-}
-fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(f64::total_cmp);
-    v[1]
-}
 pub struct Engine {
     manifest: Value,
     gpu: Option<Gpu>,
     gpu_error: Option<String>,
-    profiles: BTreeMap<String, Profile>,
+    selection_options: Value,
 }
 impl Default for Engine {
     fn default() -> Self {
@@ -580,7 +399,7 @@ impl Engine {
             manifest: serde_json::from_str(assets::MANIFEST).unwrap(),
             gpu: None,
             gpu_error: None,
-            profiles: BTreeMap::new(),
+            selection_options: json!({}),
         }
     }
     /// Execute a compiled list function into caller-owned packed storage.
@@ -602,6 +421,10 @@ impl Engine {
         let count = ink_compute_into(index, data.as_ptr(), lengths.as_ptr(), destination.cast());
         ink_compute_reset();
         count
+    }
+    pub fn configure_selection(&mut self,options:Value)->Result<()>{
+        ink_abi::selection::decide(&options,&json!({}),&["cpu".into()])?;
+        self.selection_options=options;Ok(())
     }
     pub fn manifest(&self) -> &Value {
         &self.manifest
@@ -626,31 +449,19 @@ impl Engine {
             });
             return Ok(r);
         }
-        let key = json!([
-            p.steps
-                .iter()
-                .map(|s| json!([
-                    s.f["index"],
-                    s.args
-                        .iter()
-                        .map(|a| json!([a.step, a.index, a.count]))
-                        .collect::<Vec<_>>()
-                ]))
-                .collect::<Vec<_>>(),
-            p.iterations,
-            p.feedback,
-            p.outputs,
-            p.constants
-                .iter()
-                .map(|c| json!([c.count, c.words.iter().take(8).collect::<Vec<_>>()]))
-                .collect::<Vec<_>>()
-        ])
-        .to_string();
+        let scope=json!([self.manifest["core_sha256"],self.manifest["cpu_c_sha256"],self.manifest["javascript_sha256"],p.steps.iter().map(|s|s.f["name"].as_str().unwrap()).collect::<Vec<_>>().join("|")]).to_string();
+        let graph_mode=p.steps.iter().any(|s|s.f["graph_required"].as_bool()==Some(true));
+        let list_constants=p.inputs.values().chain(p.steps.iter().flat_map(|s|s.args.iter())).filter(|r|!r.step&&r.ty["kind"]=="list").map(|r|r.index).collect::<std::collections::BTreeSet<_>>();
+        let inputs=p.constants.iter().enumerate().map(|(i,c)|json!({"list":list_constants.contains(&i),"count":c.count,"bytes":c.words.len()*4})).collect::<Vec<_>>();
+        let outputs=p.outputs.iter().map(|i|p.steps[*i].count.unwrap_or(0)).collect::<Vec<_>>();
+        let stages=p.steps.iter().map(|s|json!({"dispatches":if graph_mode{s.f["graph"]["nodes"].as_array().map_or(0,Vec::len)}else{usize::from(s.count.unwrap_or(0)>0)}})).collect::<Vec<_>>();
+        let features=ink_abi::selection::features(&json!({"inputs":inputs,"outputs":outputs,"stages":stages,"iterations":p.iterations}))?;
+        let decision=ink_abi::selection::decide(&self.selection_options,&json!({"scope":scope,"boundary":"captured-owned","features":features}),&["cpu".into(),"gpu".into()])?;
+        if backend==Backend::Auto && decision["backend"]=="cpu"{let mut r=cpu(&p)?;r["backend"]=json!("cpu");r["reason"]=decision["reason"].clone();r["profile"]=decision;return Ok(r);}
         let selected = (|| -> Result<Value> {
             if let Some(e) = &self.gpu_error {
                 return Err(e.clone());
             }
-            let setup = Instant::now();
             if self.gpu.is_none() {
                 match Gpu::new() {
                     Ok(g) => self.gpu = Some(g),
@@ -661,66 +472,13 @@ impl Engine {
                 }
             }
             self.gpu.as_mut().unwrap().prepare(&p)?;
-            let setup_ms = ms(setup);
-            if backend == Backend::Gpu {
-                let mut r = self.gpu.as_ref().unwrap().execute(&p)?;
-                r["backend"] = json!("gpu");
-                r["reason"] = json!("explicit GPU selection");
-                return Ok(r);
-            }
-            if self.profiles.get(&key).is_none_or(|p| p.uses >= 32) {
-                let mut ct = Vec::new();
-                let mut gt = Vec::new();
-                for trial in 0..3 {
-                    if trial % 2 == 0 {
-                        let t = Instant::now();
-                        cpu(&p)?;
-                        ct.push(ms(t));
-                        let t = Instant::now();
-                        self.gpu.as_ref().unwrap().execute(&p)?;
-                        gt.push(ms(t));
-                    } else {
-                        let t = Instant::now();
-                        self.gpu.as_ref().unwrap().execute(&p)?;
-                        gt.push(ms(t));
-                        let t = Instant::now();
-                        cpu(&p)?;
-                        ct.push(ms(t));
-                    }
-                }
-                let cpu_ms = median(ct);
-                let gpu_ms = median(gt);
-                if self.profiles.len() >= 32 {
-                    self.profiles.pop_first();
-                }
-                self.profiles.insert(
-                    key.clone(),
-                    Profile {
-                        cpu_ms,
-                        gpu_ms,
-                        setup_ms,
-                        uses: 0,
-                        gpu: gpu_ms + setup_ms / 32.0 < cpu_ms * 0.9,
-                    },
-                );
-            }
-            let profile = self.profiles.get_mut(&key).unwrap();
-            profile.uses += 1;
-            let profile = profile.clone();
-            let mut r = if profile.gpu {
-                self.gpu.as_ref().unwrap().execute(&p)?
-            } else {
-                cpu(&p)?
-            };
-            r["backend"] = json!(if profile.gpu { "gpu" } else { "cpu" });
-            r["reason"]=json!("measured whole pipeline including transfers; setup amortised over 32 uses, 10% minimum saving");
-            r["profile"] = profile.json();
+            let mut r=self.gpu.as_ref().unwrap().execute(&p)?;
+            r["backend"]=json!("gpu");r["reason"]=if backend==Backend::Gpu{json!("explicit GPU selection")}else{decision["reason"].clone()};r["profile"]=decision;
             Ok(r)
         })();
         match selected {
             Ok(r) => Ok(r),
             Err(e) => {
-                self.profiles.remove(&key);
                 let mut r = cpu(&p)?;
                 r["backend"] = json!("cpu");
                 r["reason"] = json!(format!("GPU fallback: {e}"));

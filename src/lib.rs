@@ -111,6 +111,9 @@ fn assemble(
     if compute {
         put(dir, "prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs"))?;
     }
+    put(dir, "ink-selection.mjs", ink_abi::SELECTION_JS_SOURCE)?;
+    put_bytes(dir, "ink-selection.wasm", ink_abi::SELECTION_WASM)?;
+    put(dir, "ink-abi.mjs", ink_abi::PACKED_JS_SOURCE)?;
     put(
         dir,
         "backend-selection.mjs",
@@ -214,7 +217,7 @@ fn assemble(
     put(dir, "native/src/assets.rs", assets)
 }
 
-pub const STATE_WASM_ABI: &str = include_str!("../hosts/state-wasm-support.rs");
+pub const STATE_WASM_ABI: &str = ink_native_support::STATE_EXPORTS_RUST_SOURCE;
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
 pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {
@@ -264,7 +267,7 @@ pub fn emit_c_program_selected(
 fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> LangResult<()> {
     fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
     put(dir, "program.c", emission.c)?;
-    put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
+    put(dir, "state-abi.h", ink_abi::STATE_C_HEADER)?;
     put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
     emit_durable_hosts(dir)?;
     put(
@@ -286,7 +289,8 @@ fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> 
     runtime.push_str("mod temporary {\n");
     runtime.push_str(ink_core::TEMPORARY_RUST_SOURCE);
     runtime.push_str("\n}\nuse temporary::{OwnedBuffer,OwnedMap};\n");
-    runtime.push_str(include_str!("../hosts/value-abi.rs"));
+    runtime.push_str(ink_abi::VALUE_KIND_RUST_SOURCE);
+    runtime.push_str(ink_native_support::DYNAMIC_VALUES_RUST_SOURCE);
     runtime.push_str(STATE_WASM_ABI);
     runtime.push_str(NATIVE_STATE_ADAPTER);
     emit_native_state_host(dir)?;
@@ -310,8 +314,10 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[workspace]\n")?;
     put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
     emit_durable_hosts(dir)?;
-    put(dir, "state-abi.h", include_str!("../hosts/state-abi.h"))?;
+    put(dir, "state-abi.h", ink_abi::STATE_C_HEADER)?;
     Ok(())
 }
 
 pub mod representation;
+
+fn put_bytes(dir:&Path,name:&str,bytes:&[u8])->LangResult<()>{fs::write(dir.join(name),bytes).map_err(|e|e.to_string())}
