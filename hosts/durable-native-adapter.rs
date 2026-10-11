@@ -27,6 +27,15 @@ impl durable::CompiledState for State {
     fn acknowledge(&mut self, commit: u64, position: u64) {
         self.acknowledge_through(commit, position)
     }
+    fn begin_transaction(&mut self) -> Result<bool, String> {
+        self.begin_transaction()
+    }
+    fn commit_transaction(&mut self) {
+        self.commit_transaction()
+    }
+    fn rollback_transaction(&mut self) {
+        self.rollback_transaction()
+    }
     fn version(&self) -> u64 {
         self.version()
     }
