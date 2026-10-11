@@ -59,3 +59,8 @@ CLI `emit-state` uses `COMPLETE_STATE_RUNNER` and `emit_native_state_host`; the
 specialised `STATE_RUNNER` remains available for direct state-emitter harnesses.
 
 Mixed native bundles dispatch eligible pure calls independently of durable transactions. GPU calls do not publish state or retry receipts; poisoned hosts reject dispatch until reopened. Both native runners share `hosts/native/state-cli.rs`.
+
+Source-bound representation codecs also transport supported List values through
+Nil/Cons datatypes, preserving nested element types and enforcing depth/length
+limits. Native definition execution retains its separate resource limits.
+See the Ink distribution docs/point-query-delta.md for tested domains and bounds.
