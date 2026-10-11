@@ -1,6 +1,7 @@
+import {width,pack,unpack} from "./ink-abi.mjs";
 import * as deviceLowering from "./ink-device.mjs";
 const {createDevice} = deviceLowering;
-import {createSelector,profileScope} from "./backend-selection.mjs";
+import {createSelector,profileScope,workloadFeatures} from "./backend-selection.mjs";
 import {createPackedCall} from "./prepared-wasm.mjs";
 // Trusted values ABI: caller supplies correctly typed, stable arguments.
 // Packing is transport for Wasm/GPU, never the JavaScript execution representation.
@@ -10,130 +11,9 @@ const MAX_BYTES = 256 * 1024 * 1024,
 const fail = (s) => {
   throw Error(s);
 };
-const width = (t) =>
-  t.kind === "list"
-    ? width(t.element)
-    : t.kind === "vector"
-      ? t.size * width(t.element)
-      : t.kind === "record"
-        ? t.fields.reduce((n, f) => n + width(f.type), 0)
-        : t.kind === "u64"
-          ? 2
-          : 1;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-function pack(v, t) {
-  if(t.kind === 'list' && t.element.kind === 'u32') {
-    if(v.length * 4 > MAX_BYTES) fail('input exceeds 256 MiB budget');
-    return {words:v instanceof Uint32Array ? v.slice() : Uint32Array.from(v),type:t,count:v.length,finite:true};
-  }
-  // Fixed-width carriers reserve their final transport once. Nested lists
-  // retain the same flattened word ABI, with their size counted recursively.
-  const variable = t => t.kind === 'list' || (t.kind === 'vector' && variable(t.element)) || (t.kind === 'record' && t.fields.some(f => variable(f.type)));
-  function size(v,t) {
-    if(!variable(t)) return width(t);
-    if(t.kind === 'list' || t.kind === 'vector') {
-      if(!variable(t.element)) return v.length*width(t.element);
-      let n=0;for(const x of v)n+=size(x,t.element);return n;
-    }
-    return t.fields.reduce((n,f)=>n+size(v[f.name],f.type),0);
-  }
-  const countWords=size(v,t);
-  if(countWords*4 > MAX_BYTES) fail('input exceeds 256 MiB budget');
-  const words = new Uint32Array(countWords),
-    view = new DataView(new ArrayBuffer(4));
-  let cursor=0;
-  let finite = true;
-  function go(v, t) {
-    switch (t.kind) {
-      case "list":
-        for (const x of v) go(x, t.element);
-        break;
-      case "vector":
-        for (const x of v) go(x, t.element);
-        break;
-      case "record":
-        for (const f of t.fields) {
-          go(v[f.name], f.type);
-        }
-        break;
-      case "bool":
-        words[cursor++]=+v;
-        break;
-      case "u32":
-      case "i32":
-        words[cursor++]=v >>> 0;
-        break;
-      case "u64": {
-        const n = BigInt(v);
-        words[cursor++]=Number(n & 4294967295n);
-        words[cursor++]=Number(n >> 32n);
-        break;
-      }
-      case "f32":
-        if (typeof v === "number") {
-          view.setFloat32(0, v, true);
-          finite &&= Number.isFinite(view.getFloat32(0, true));
-          words[cursor++]=view.getUint32(0, true);
-        } else {
-          view.setUint32(0, v.F32Bits, true);
-          finite &&= Number.isFinite(view.getFloat32(0, true));
-          words[cursor++]=v.F32Bits;
-        }
-        break;
-      default:
-        fail("unsupported packed type");
-    }
-  }
-  go(v, t);
-  if (words.length * 4 > MAX_BYTES) fail("input exceeds 256 MiB budget");
-  return {
-    words,
-    type: t,
-    count: t.kind === "list" ? v.length : 1,
-    finite,
-  };
-}
-function unpack(words, t, native = false, destination = null) {
-  const type=t;
-  let i = 0;
-  const view = new DataView(new ArrayBuffer(4));
-  function go(t) {
-    switch (t.kind) {
-      case "list": {
-        const n = words.length / width(t.element);
-        if (!Number.isInteger(n)) fail("invalid result layout");
-        if(destination && t === type) {
-          for(let j=0;j<n;j++) destination[j]=go(t.element);
-          return destination;
-        }
-        if(t.element.kind === 'u32') { const value=Array.from(words.subarray(i,i+n));i+=n;return value; }
-        return Array.from({ length: n }, () => go(t.element));
-      }
-      case "vector":
-        return Array.from({ length: t.size }, () => go(t.element));
-      case "record":
-        return Object.fromEntries(t.fields.map((f) => [f.name, go(f.type)]));
-      case "bool":
-        return words[i++] !== 0;
-      case "u32":
-        return words[i++];
-      case "i32":
-        return words[i++] | 0;
-      case "u64": {
-        const n = BigInt(words[i++]) + (BigInt(words[i++]) << 32n);
-        return native ? n : n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : n.toString();
-      }
-      case "f32":
-        view.setUint32(0, words[i++], true);
-        return Number.isFinite(view.getFloat32(0, true))
-          ? view.getFloat32(0, true)
-          : { F32Bits: view.getUint32(0, true) };
-      default:
-        fail("invalid result type");
-    }
-  }
-  return go(t);
-}
+
+
 function compilePlan(plan, functions, native = false) {
   if (
     !plan ||
@@ -287,7 +167,7 @@ function compilePlan(plan, functions, native = false) {
 }
 export async function loadInk(
   base,
-  { gpu = true, backend: defaultBackend = "auto", expectedCalls=32, recheckEvery=32, policy="adaptive", staticBackend="cpu", costProfile=null, targetKey="" } = {},
+  { gpu = true, backend: defaultBackend = "auto", policy="adaptive", staticBackend="cpu", costProfile=null, targetKey="" } = {},
 ) {
   const root = new URL(base, globalThis.location?.href ?? "http://localhost/");
   if (!root.pathname.endsWith("/")) root.pathname += "/";
@@ -305,8 +185,11 @@ export async function loadInk(
     cpuStartup=performance.now()-start;
   }
   let tail=Promise.resolve(), closed=false;
-  const selector=createSelector({expectedCalls,recheckEvery,policy,staticBackend,costProfile,targetKey});
-  const resolveBackend=requested=>requested==='auto'&&policy==='static'?staticBackend:requested;
+  const selector=createSelector({policy,staticBackend,costProfile,targetKey});
+  const staticChoice=policy==='static' ? (await selector.choose(['cpu','javascript',...(gpu?['gpu']:[])])).backend : null;
+  // Resolve only the native JS transport boundary early. Other static choices
+  // stay automatic until the shared contract sees actual device eligibility.
+  const resolveBackend=requested=>requested==='auto' && staticChoice==='javascript' ? 'javascript' : requested;
   const jsStart=performance.now();
   const javascript=await import(new URL("program.mjs",root));
   const jsStartup=performance.now()-jsStart;
@@ -441,8 +324,8 @@ export async function loadInk(
     if(backend === 'gpu' && p.reason){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:p.reason};}
     const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
     const graphMode=p.steps.some(s=>s.f.graph_required);
-    const features={input_elements:p.constants.reduce((n,c)=>n+(c.type.kind==='list'?c.count:0),0),input_bytes:p.constants.reduce((n,c)=>n+c.words.byteLength,0),output_capacity_elements:p.outputs.reduce((n,id)=>n+(p.steps[p.ids.get(id)].count??0),0),dispatches:p.steps.reduce((n,s)=>n+(graphMode?s.f.graph.nodes.length:(s.count?1:0)),0)*p.iterations,iterations:p.iterations};
-    const key=policy==='profile'?JSON.stringify([scope,p.steps.map(s=>[s.f.index,s.args.map(a=>[a.kind,a.index,a.count])]),p.iterations,[...p.feedback],p.outputs,p.constants.map(c=>[c.type,c.count,Array.from(c.words.subarray(0,8))])]):scope;
+    const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:graphMode?s.f.graph.nodes.length:(s.count?1:0)})),iterations:p.iterations});
+    const key=scope;
 
     const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
     if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:()=>adapter.prepare(p),run:()=>adapter.run(p)});

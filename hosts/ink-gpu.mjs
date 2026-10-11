@@ -1,7 +1,7 @@
 import {createDevice} from "./ink-device.mjs";
-import {createSelector,profileScope} from "./backend-selection.mjs";
+import {createSelector,profileScope,workloadFeatures} from "./backend-selection.mjs";
 // Compiled Wasm CPU fallback + literal WGSL stages. Profiles never grant facts
-// about future inputs. Calls are serialized; trials have no application effects.
+// about future inputs. Calls are serialized; saved profiles never trigger trials.
 const now=()=>performance.now();
 // Caller owns numeric types/ranges; these conversions implement the Wasm ABI.
 function word(v,type){return type === 'u64' ? BigInt(v) : v;}
@@ -14,12 +14,6 @@ function argumentsFor(f,args){
     if(inner==='u64'&&v instanceof BigUint64Array)return v.slice();
     return inner==='u32'?Uint32Array.from(v):BigUint64Array.from(v,x=>word(x,inner));
   });
-}
-function profileKey(f,args){
-  const xs=args[f.gpu.list_param],n=xs.length;
-  let zero=0,high=0,samples=0;
-  for(let i=0;i<n;i+=Math.max(1,Math.floor(n/64))){zero+=xs[i]===0?1:0;high+=xs[i]>=0x80000000?1:0;samples++;if(samples===64)break;}
-  return JSON.stringify([f.index,n?Math.floor(Math.log2(n)):0,Math.floor(zero*4/Math.max(1,samples)),Math.floor(high*4/Math.max(1,samples)),args.filter((_,i)=>i!==f.gpu.list_param)],(_,v)=>typeof v==='bigint'?v.toString():v);
 }
 export async function loadInk(base,options={}){
   const backend=options.backend??'auto';if(!['auto','cpu','javascript','gpu','gpu-required'].includes(backend))throw Error('backend must be auto, cpu, javascript or gpu');
@@ -63,15 +57,15 @@ export async function loadInk(base,options={}){
     if(f.gpu && !disabled.has(f.index) && options.gpu!==false) candidates.push({name:'gpu',async:true,verify:(value,reference)=>value===reference,prepare:()=>adapter.prepare(f,args),run:async()=>{
       try {return await adapter.run(f,args);}catch(error){if(!/limits|budget/.test(String(error)))disabled.set(f.index,String(error));throw error;}
     }});
-    const scope=profileScope(manifest,f.name),features={input_elements:args.reduce((n,v)=>n+(typeof v==='object'?v.length:0),0),input_bytes:args.reduce((n,v)=>n+(typeof v==='object'?v.byteLength:4),0),output_capacity_elements:1,dispatches:1,iterations:1};
-    const key=options.policy==='profile'?(f.gpu?profileKey(f,args):JSON.stringify([f.index,args.map(v=>typeof v==='object'?v.length:String(v))])):scope;
+    const scope=profileScope(manifest,f.name),features=await workloadFeatures({inputs:args.map((v,i)=>({list:f.params[i].type.startsWith('list_'),count:typeof v==='object'?v.length:1,bytes:typeof v==='object'?v.byteLength:(f.params[i].type==='u64'?8:4)})),outputs:[1],stages:[{dispatches:1}],iterations:1});
+    const key=scope;
     const outcome=await selector.run(key,candidates,backend,{scope,boundary:'captured-owned',features});
     return {value:outcome.result,backend:outcome.backend,reason:outcome.reason,profile:outcome.profile};
   }
   return {
     manifest,
     capture(name,args){const f=functions.get(name);if(!f)throw Error(`unknown function ${name}`);return argumentsFor(f,args);},
-    run(name,args,selection=backend){if(selection==='auto'&&options.policy==='static')selection=options.staticBackend??'cpu';const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu','gpu-required'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
+    run(name,args,selection=backend){const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu','gpu-required'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
       const pending=serial.then(()=>run(f,validated,selection));serial=pending.catch(()=>{});return pending;},
     async close(){await serial;closed=true;adapter.close();selector.clear();},
   };
