@@ -322,10 +322,6 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     Ok(())
 }
 
-pub mod representation;
-pub mod definition_ffi;
-pub mod definition_process;
-pub mod definition_machine;
 
 /// Plain handle/buffer ABI appended to standalone representation applications.
 pub const REPRESENTATION_ABI_SOURCE: &str = include_str!("../hosts/representation-abi.rs.txt");
