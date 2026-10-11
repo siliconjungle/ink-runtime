@@ -43,6 +43,17 @@ fn encode_value(
     Ok(match (t, v) {
         (Type::U64, Value::U64(x)) => Term::U64(*x),
         (Type::Bool, Value::Bool(x)) => Term::Bool(*x),
+        (Type::List(t0), Value::List(xs)) => {
+            if xs.len() > 4096 {
+                return Err("representation list value limit".into());
+            }
+            let id = type_id(c, t)?;
+            let mut tail = construct(id, 0, vec![]);
+            for v in xs.iter().rev() {
+                tail = construct(id, 1, vec![inner(t0, v)?, tail]);
+            }
+            tail
+        }
         (Type::Unit, Value::Unit) => construct(type_id(c, t)?, 0, vec![]),
         (Type::Named(n), Value::Enum(_, x)) => construct(
             type_id(c, t)?,
@@ -96,6 +107,23 @@ pub fn decode(c: &CheckedRepresentation, t: &Type, value: &Term) -> LangResult<J
         let (tag, args) = data(value, type_id(c, t)?)?;
         let inner = |t, v| go(c, t, v, d + 1);
         Ok(match t {
+            Type::List(t0) => {
+                let id = type_id(c, t)?;
+                let mut cursor = value;
+                let mut xs = vec![];
+                loop {
+                    let (tag, args) = data(cursor, id)?;
+                    match (tag, args) {
+                        (0, []) => break,
+                        (1, [head, tail]) if xs.len() < 4096 => {
+                            xs.push(inner(t0, head)?);
+                            cursor = tail;
+                        }
+                        _ => return Err("representation list carrier/limit".into()),
+                    }
+                }
+                Json::Array(xs)
+            }
             Type::Unit if tag == 0 && args.is_empty() => Json::Null,
             Type::Named(n) if p.enums.contains_key(n) && args.is_empty() => {
                 format!("{n}.{}", p.enums[n].get(tag).ok_or("enum tag")?).into()
