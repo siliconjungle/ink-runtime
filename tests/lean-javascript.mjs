@@ -20,7 +20,7 @@ async function fixture(run,options={}) {
  const dir=await mkdtemp(join(tmpdir(),'ink-lean-runtime-'));
  for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){},prepare(){throw Error('GPU unavailable')},run(){throw Error('GPU unavailable')},capture(p){const outputs=p.outputs.slice();return {setup:{upload_bytes:4},run(){return {values:Object.fromEntries(outputs.map(id=>[id,[7]])),counters:{upload_bytes:0}}},close(){}}}});");
- await writeFile(join(dir,'program.mjs'),`export const functions={
+ await writeFile(join(dir,'program.mjs'),`export const metadata={functions:[]};export const functions={
   increment:xs=>Array.from(xs,x=>(x+1)>>>0),negative:xs=>Array.from(xs,x=>x<0),count:xs=>BigInt(xs.length),
   wide:xs=>Array.from(xs,x=>BigInt.asUintN(64,x+1n)),identity:xs=>xs,
   signed:xs=>Array.from(xs,x=>(x+1)|0),floatIdentity:xs=>xs,wideIdentity:xs=>xs,wideNested:xs=>xs
@@ -92,7 +92,7 @@ test('scalar host binds native JS and lazily retains its Wasm fallback',async()=
  const dir=await mkdtemp(join(tmpdir(),'ink-lean-scalar-'));
  for(const name of ['ink-gpu.mjs','backend-selection.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){}});");
- await writeFile(join(dir,'program.mjs'),"export const functions={advance:(x,y)=>(x+y)>>>0,total:xs=>{let n=0;for(const x of xs)n=(n+x)>>>0;return n}};");
+ await writeFile(join(dir,'program.mjs'),"export const metadata={functions:[]};export const functions={advance:(x,y)=>(x+y)>>>0,total:xs=>{let n=0;for(const x of xs)n=(n+x)>>>0;return n}};");
  const manifest={schema:1,backend:'webgpu-wgpu-v1',functions:[{index:0,name:'advance',params:[{type:'u32'},{type:'u32'}],result:'u32'},{index:1,name:'total',params:[{type:'list_u32'}],result:'u32'}]};
  const oldFetch=globalThis.fetch,oldInstantiate=WebAssembly.instantiate;
  let wasmLoads=0;
