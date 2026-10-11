@@ -18,7 +18,7 @@ const functions=specs.map(([name,params,result],index)=>({index,name,params:para
 
 async function fixture(run,options={}) {
  const dir=await mkdtemp(join(tmpdir(),'ink-lean-runtime-'));
- for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
+ for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs','pipeline-contract.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){},prepare(){throw Error('GPU unavailable')},run(){throw Error('GPU unavailable')},capture(p){const outputs=p.outputs.slice();return {setup:{upload_bytes:4},run(){return {values:Object.fromEntries(outputs.map(id=>[id,[7]])),counters:{upload_bytes:0}}},close(){}}}});");
  await writeFile(join(dir,'program.mjs'),`export const functions={
   increment:xs=>Array.from(xs,x=>(x+1)>>>0),negative:xs=>Array.from(xs,x=>x<0),count:xs=>BigInt(xs.length),

@@ -28,7 +28,20 @@ hold at most32 decisions; availability/device loss clears or changes decisions.
 Measurements never establish correctness, valid types, ranges or source equality.
 The profile is copied/bound once, and its component estimates are untrusted
 profitability data. Native wgpu bundles continue to use their C CPU path.
-Mixed modules expose complete Wasm state execution and explicit JavaScript state instances. Stateful actions never enter speculative selection. Per-stage adaptive JS/Wasm/GPU placement remains future work.
+Mixed modules expose complete Wasm state execution and explicit JavaScript state instances. Stateful actions never enter speculative selection.
+
+Packed browser pipelines support saved-profile partition/target selection through
+an external planner asset. The distribution installs the pinned planner with
+`install_pipeline_planner`; standalone runtime assembly contains physical
+`pipeline-contract.mjs`, scheduling/workers and profiling tools, with no search.
+Explicit partitions work without a planner. `placementProfile`, `parallelism`
+(0..16) and `expectedCalls` enable bounded mixed JS/Wasm/WebGPU placement and pure
+worker overlap. Contiguous GPU groups retain interiors; whole-GPU feedback retains
+its device batch path. Typed bridges preserve captured input and owned output
+lifetimes. Failed tasks replay only pure groups on CPU and drain before close.
+Cold alternatives require measured setup until ready; unknown domains or absent
+CPU comparisons keep baseline. See the distribution's `docs/adaptive-execution.md`
+and `reports/adaptive-placement-2026-10-12` for the completed contract and gates.
 
 The JavaScript value ABI trusts the caller, like native compiled code: arguments
 must have the declared types and ranges, with U64 supplied as BigInt. Generated
@@ -53,7 +66,7 @@ submission retain the same captured semantics. Graph configuration, device limit
 layout invariants remain host responsibilities. The packed host retains its
 JSON-compatible U64 output convention (safe Number, otherwise decimal string).
 
-Run browser checks with `node --test tests/backend-selection.mjs tests/lean-javascript.mjs tests/transport40.mjs`.
+Run host checks with `node --test tests/*.mjs`. The distribution browser harness exercises emitted code, real WebGPU and real workers.
 
 Explicit packed CPU calls bind the function directly and marshal its arguments
 without building a pipeline or profiling key. Pipeline reference detection
