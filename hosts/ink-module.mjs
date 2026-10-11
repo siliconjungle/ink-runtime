@@ -14,9 +14,9 @@ export async function loadInk(base,{gpu=true,backend='auto',...options}={}){
    const cpuCall=()=>parallel?pure.pureAsync(name,args):pure.pure(name,args);
    const f=manifest.functions.find(f=>f.name===name);if(!f)throw Error(`unknown Ink function ${name}`);
    if(chosen==='javascript')return {value:parallel?await js.callAsync(name,args):js.call(name,args),backend:'javascript',reason:'explicit backend selection'};
-   if(f.gpu&&chosen!=='cpu'){try{return await(await part(f)).call(name,args,{backend:chosen,...callOptions});}catch(e){if(chosen==='gpu-required')throw e;return {value:await cpuCall(),backend:'cpu',reason:`GPU fallback: ${e.message}`};}}
+   if(f.gpu&&chosen!=='cpu'){try{const host=await part(f);return await(host.call?host.call(name,args,{backend:chosen,...callOptions}):host.run(name,args,chosen));}catch(e){if(chosen==='gpu-required')throw e;return {value:await cpuCall(),backend:'cpu',reason:`GPU fallback: ${e.message}`};}}
    if(chosen==='gpu-required')throw Error(f.fallback_reason??'GPU lowering unavailable');
    return {value:await cpuCall(),backend:'cpu',reason:f.fallback_reason??'explicit backend selection'};
-  },dispose(){pure.dispose();for(const pending of parts.values())pending.then(p=>p.dispose?.()).catch(()=>{});parts.clear();}
+  },dispose(){pure.dispose();const pending=[...parts.values()].map(p=>p.then(host=>host.dispose?host.dispose():host.close?.()).catch(()=>{}));parts.clear();return Promise.all(pending);}
  };
 }

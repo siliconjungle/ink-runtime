@@ -28,7 +28,7 @@ pub fn emit(
         let p = r.module().program();
         let projection = r.projection();
         let id = &r.request().representation;
-        let emission = ink_lowering_js::definition::lower(r.definition())?;
+        let emission = ink_lowering_js::portable_definition::lower(r.definition())?;
         let name = format!("__representation_definition_{}", bindings.len());
         output.push_str(&format!(
             "const {name}=(()=>{{{};return invokeNative;}})();\n",
@@ -50,7 +50,7 @@ pub fn emit(
         plans.insert(id.clone(),json!({"id":id,"source":source,"encode":r.plan().encode,"decode":r.plan().decode,"types":projection.types,"state":projection.state,"events":projection.events,"event":event,"tables":projection.tables,"actions":actions,"records":p.records,"enums":p.enums,"channels":p.events.iter().collect::<Vec<_>>()}));
     }
     for m in migrations {
-        let emission = ink_lowering_js::definition::lower(m.definition())?;
+        let emission = ink_lowering_js::portable_definition::lower(m.definition())?;
         let id = ink_core::registry::identity(&(
             m.source_identity(),
             m.endpoints(),

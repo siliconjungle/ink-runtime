@@ -14,14 +14,20 @@ The Ink distribution pins this repository and tests integrated lowering/executio
 
 Browser bundles also include trusted `program.mjs` emission from the pinned
 `ink-lowering-js` package. Both scalar calls and packed pipelines accept explicit
-`javascript`, `cpu` (Wasm), `gpu` or `auto` selection. `backend-selection.mjs`
-compares eligible pure candidates with bounded, alternating measurements of
-whole execution, including conversions, transfers and result materialisation.
-Initial JavaScript/Wasm module setup is charged once and amortised over expected
-reuse; later profiles measure warm execution. GPU preparation remains explicit.
-Unavailable/failed candidates retain the compiled CPU baseline. Profiling caches
-hold at most 32 shapes and recheck after 32 uses by default. Profile receipts are
-observations, not proofs. Native wgpu bundles continue to use their C CPU path.
+`javascript`, `cpu` (Wasm), `gpu` or `auto` selection. `backend-selection.mjs` separates execution policy from language semantics.
+The default `policy:'adaptive'` uses an optional saved `costProfile` bound to a
+`targetKey`, exact emitted-code scope and a declared workload domain. It performs
+one chosen execution and no online trials. Without comparable CPU/alternative
+profile evidence it retains the compiled CPU baseline. `policy:'static'` fixes
+`staticBackend:'cpu'|'javascript'|'gpu'`; explicit backend requests override the
+policy. Static JS calls avoid packed transport and Wasm initialization.
+`policy:'profile'` explicitly enables the historical bounded alternating trials
+for pure training calls, including conversions, transfers and materialization.
+It is not used for stateful actions or explicit destination calls. Profile caches
+hold at most32 decisions; availability/device loss clears or changes decisions.
+Measurements never establish correctness, valid types, ranges or source equality.
+The profile is copied/bound once, and its component estimates are untrusted
+profitability data. Native wgpu bundles continue to use their C CPU path.
 Mixed modules expose complete Wasm state execution and explicit JavaScript state instances. Stateful actions never enter speculative selection. Per-stage adaptive JS/Wasm/GPU placement remains future work.
 
 The JavaScript value ABI trusts the caller, like native compiled code: arguments
@@ -38,11 +44,16 @@ native values between stages rather than packing, unpacking and recapturing each
 intermediate result. They remain serialized, so callers must keep borrowed
 JavaScript inputs stable until the returned promise settles. Wasm/GPU calls still
 snapshot inputs for transport; flat U32 typed arrays use one bulk clone. CPU
-fallback loads lazily when needed. Graph configuration, device limits and result
+fallback loads lazily when needed. Captured automatic U32 JavaScript calls reuse
+the private typed transport snapshot as a native list; they do not unpack a
+second input array. Packed-host identity results still become fresh public
+Arrays, and explicit JavaScript identity calls retain their borrowed-input
+contract. Typed logical lengths, shared inputs and caller mutation after
+submission retain the same captured semantics. Graph configuration, device limits and result
 layout invariants remain host responsibilities. The packed host retains its
 JSON-compatible U64 output convention (safe Number, otherwise decimal string).
 
-Run browser checks with `node --test tests/backend-selection.mjs tests/lean-javascript.mjs`.
+Run browser checks with `node --test tests/backend-selection.mjs tests/lean-javascript.mjs tests/transport40.mjs`.
 
 Explicit packed CPU calls bind the function directly and marshal its arguments
 without building a pipeline or profiling key. Pipeline reference detection
@@ -57,7 +68,15 @@ from `run()`. `writeArgument` updates reserved packed inputs; `close` releases
 the call. Capacity, declared types, eight-byte packed alignment, nonaliasing and
 borrowed view lifetimes are trusted caller obligations. Scratch allocations are
 rewound to a saved mark on every prepared run. Ordinary calls preserve their
-existing result behavior. See the distribution's
+existing result behavior. Terminal CPU results decode into owned host values
+before the arena resets; their intermediate packed clone is omitted. Pipeline
+outputs decode on the final iteration, while only later stage uses and feedback
+retain owned packed intermediates across resets. CPU destination decoding writes
+directly into the caller's output prefix without an intermediate result Array.
+U64 native bridge decoding produces BigInt in one pass; JSON-compatible public
+U64 values still use safe Numbers or decimal strings. Generic packing fills its
+final typed word allocation directly. These are fixed transport/lifetime rules,
+not source-specific rewrites or mathematical proof admission. See the distribution's
 `docs/web-engine-storage-and-contexts.md` for the full ownership and trust
 boundary; the physical lowering is tested, not certified machine code.
 
@@ -103,6 +122,16 @@ CLI `emit-state` uses `COMPLETE_STATE_RUNNER` and `emit_native_state_host`; the
 specialised `STATE_RUNNER` remains available for direct state-emitter harnesses.
 
 Mixed native bundles dispatch eligible pure calls independently of durable transactions. GPU calls do not publish state or retry receipts; poisoned hosts reject dispatch until reopened. Both native runners share `hosts/native/state-cli.rs`.
+
+Packed compute bundles expose `await prepareGpuPipeline(plan)` for a fixed pure
+pipeline without feedback. It snapshots/uploads declared inputs once and retains
+GPU buffers and bindings. `run()` executes the active emitted legacy shader or
+required graph and returns fresh full owned readback values plus actual counters;
+`setup` records upload/live bytes separately, and subsequent `upload_bytes` is
+zero. Dynamic graph output lengths remain device headers, never capacities.
+`close()` releases storage; engine close/device loss invalidates sessions. Runs
+are serialized by the host. This is resident input with owned readback, not a
+GPU-only timing boundary or a mutable public device handle.
 
 Source-bound representation codecs also transport supported List values through
 Nil/Cons datatypes, preserving nested element types and enforcing depth/length

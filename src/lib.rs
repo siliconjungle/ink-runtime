@@ -87,6 +87,7 @@ fn assemble(
     let javascript = ink_lowering_js::lower(checked)?;
     let mut emitted = ink_lowering_gpu::gpu::lower(checked)?;
     emitted.manifest["javascript"] = javascript.manifest.clone();
+    emitted.manifest["javascript_sha256"] = json!(format!("{:x}", Sha256::digest(javascript.javascript.as_bytes())));
     if compute {
         emitted.manifest["destination_abi"] = json!({
             "name":"ink-packed-into-v1", "symbol":"ink_compute_into",

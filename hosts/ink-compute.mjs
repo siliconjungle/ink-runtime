@@ -1,6 +1,6 @@
 import * as deviceLowering from "./ink-device.mjs";
 const {createDevice} = deviceLowering;
-import {createSelector} from "./backend-selection.mjs";
+import {createSelector,profileScope} from "./backend-selection.mjs";
 import {createPackedCall} from "./prepared-wasm.mjs";
 // Trusted values ABI: caller supplies correctly typed, stable arguments.
 // Packing is transport for Wasm/GPU, never the JavaScript execution representation.
@@ -26,8 +26,22 @@ function pack(v, t) {
     if(v.length * 4 > MAX_BYTES) fail('input exceeds 256 MiB budget');
     return {words:v instanceof Uint32Array ? v.slice() : Uint32Array.from(v),type:t,count:v.length,finite:true};
   }
-  const words = [],
+  // Fixed-width carriers reserve their final transport once. Nested lists
+  // retain the same flattened word ABI, with their size counted recursively.
+  const variable = t => t.kind === 'list' || (t.kind === 'vector' && variable(t.element)) || (t.kind === 'record' && t.fields.some(f => variable(f.type)));
+  function size(v,t) {
+    if(!variable(t)) return width(t);
+    if(t.kind === 'list' || t.kind === 'vector') {
+      if(!variable(t.element)) return v.length*width(t.element);
+      let n=0;for(const x of v)n+=size(x,t.element);return n;
+    }
+    return t.fields.reduce((n,f)=>n+size(v[f.name],f.type),0);
+  }
+  const countWords=size(v,t);
+  if(countWords*4 > MAX_BYTES) fail('input exceeds 256 MiB budget');
+  const words = new Uint32Array(countWords),
     view = new DataView(new ArrayBuffer(4));
+  let cursor=0;
   let finite = true;
   function go(v, t) {
     switch (t.kind) {
@@ -43,26 +57,27 @@ function pack(v, t) {
         }
         break;
       case "bool":
-        words.push(+v);
+        words[cursor++]=+v;
         break;
       case "u32":
       case "i32":
-        words.push(v >>> 0);
+        words[cursor++]=v >>> 0;
         break;
       case "u64": {
         const n = BigInt(v);
-        words.push(Number(n & 4294967295n), Number(n >> 32n));
+        words[cursor++]=Number(n & 4294967295n);
+        words[cursor++]=Number(n >> 32n);
         break;
       }
       case "f32":
         if (typeof v === "number") {
           view.setFloat32(0, v, true);
           finite &&= Number.isFinite(view.getFloat32(0, true));
-          words.push(view.getUint32(0, true));
+          words[cursor++]=view.getUint32(0, true);
         } else {
           view.setUint32(0, v.F32Bits, true);
           finite &&= Number.isFinite(view.getFloat32(0, true));
-          words.push(v.F32Bits);
+          words[cursor++]=v.F32Bits;
         }
         break;
       default:
@@ -72,13 +87,14 @@ function pack(v, t) {
   go(v, t);
   if (words.length * 4 > MAX_BYTES) fail("input exceeds 256 MiB budget");
   return {
-    words: Uint32Array.from(words),
+    words,
     type: t,
     count: t.kind === "list" ? v.length : 1,
     finite,
   };
 }
-function unpack(words, t) {
+function unpack(words, t, native = false, destination = null) {
+  const type=t;
   let i = 0;
   const view = new DataView(new ArrayBuffer(4));
   function go(t) {
@@ -86,6 +102,11 @@ function unpack(words, t) {
       case "list": {
         const n = words.length / width(t.element);
         if (!Number.isInteger(n)) fail("invalid result layout");
+        if(destination && t === type) {
+          for(let j=0;j<n;j++) destination[j]=go(t.element);
+          return destination;
+        }
+        if(t.element.kind === 'u32') { const value=Array.from(words.subarray(i,i+n));i+=n;return value; }
         return Array.from({ length: n }, () => go(t.element));
       }
       case "vector":
@@ -100,7 +121,7 @@ function unpack(words, t) {
         return words[i++] | 0;
       case "u64": {
         const n = BigInt(words[i++]) + (BigInt(words[i++]) << 32n);
-        return n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : n.toString();
+        return native ? n : n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : n.toString();
       }
       case "f32":
         view.setUint32(0, words[i++], true);
@@ -198,7 +219,7 @@ function compilePlan(plan, functions, native = false) {
     ids.set(step.id, steps.length);
     steps.push({ id: step.id, f, args, count, graphShape });
   }
-  const outputs = plan.outputs ?? [steps.at(-1).id];
+  let outputs = plan.outputs ?? [steps.at(-1).id];
   if (
     !Array.isArray(outputs) ||
     !outputs.length ||
@@ -206,6 +227,7 @@ function compilePlan(plan, functions, native = false) {
     outputs.some((x) => !ids.has(x))
   )
     fail("invalid pipeline outputs");
+  outputs = outputs.slice();
   const feedback = new Map();
   const graphExecution=steps.some(s=>s.f.graph_required);
   if(graphExecution && steps.some(s=>!s.f.graph))
@@ -251,6 +273,7 @@ function compilePlan(plan, functions, native = false) {
   }
   if (bytes > MAX_BYTES) reason ??= "GPU live-buffer budget exceeds 256 MiB";
   return {
+    native,
     constants,
     inputs,
     steps,
@@ -264,7 +287,7 @@ function compilePlan(plan, functions, native = false) {
 }
 export async function loadInk(
   base,
-  { gpu = true, backend: defaultBackend = "auto", expectedCalls=32, recheckEvery=32 } = {},
+  { gpu = true, backend: defaultBackend = "auto", expectedCalls=32, recheckEvery=32, policy="adaptive", staticBackend="cpu", costProfile=null, targetKey="" } = {},
 ) {
   const root = new URL(base, globalThis.location?.href ?? "http://localhost/");
   if (!root.pathname.endsWith("/")) root.pathname += "/";
@@ -282,13 +305,14 @@ export async function loadInk(
     cpuStartup=performance.now()-start;
   }
   let tail=Promise.resolve(), closed=false;
-  const selector=createSelector({expectedCalls,recheckEvery});
+  const selector=createSelector({expectedCalls,recheckEvery,policy,staticBackend,costProfile,targetKey});
+  const resolveBackend=requested=>requested==='auto'&&policy==='static'?staticBackend:requested;
   const jsStart=performance.now();
   const javascript=await import(new URL("program.mjs",root));
   const jsStartup=performance.now()-jsStart;
   const functions=new Map(manifest.functions.map(f=>[f.name,{...f,parallel:javascript.metadata.functions.find(m=>m.name===f.name)?.parallel??false,javascript:javascript.functions[f.name],output:compileJavascriptOutput(f.result)}]));
   const adapter=createDevice({root, enabled:gpu, onLost:()=>selector.clear(),fail,width,unpack,MAX_BYTES});
-  function cpuCall(f, args) {
+  function cpuCall(f, args, consume) {
     cpu.ink_compute_reset();
     try {
       const ptrs = cpu.ink_alloc(args.length, 4),
@@ -315,7 +339,7 @@ export async function loadInk(
         const words = kind === 'u64'
           ? Uint32Array.of(Number(result & 4294967295n), Number((result >> 32n) & 4294967295n))
           : Uint32Array.of(result);
-        return { words, type: f.result, count: 1 };
+        return consume({ words, type: f.result, count: 1 }, false);
       }
       const header = cpu.ink_alloc(2, 4);
       cpu.ink_compute_call(f.index, ptrs, lengths, header, header + 4);
@@ -323,26 +347,36 @@ export async function loadInk(
         ptr = view.getUint32(header, true),
         count = view.getUint32(header + 4, true);
       if (count * 4 > MAX_BYTES) fail("CPU output exceeds 256 MiB budget");
-      const words = new Uint32Array(cpu.memory.buffer, ptr, count).slice();
-      return {
+      const words = new Uint32Array(cpu.memory.buffer, ptr, count);
+      // Decode terminal owned values while arena storage is still alive.
+      // Only packed intermediates that cross a reset need a transport copy.
+      return consume({
         words,
         type: f.result,
         count: f.result.kind === "list" ? count / width(f.result.element) : 1,
-      };
+      }, true);
     } finally {
       cpu.ink_compute_reset();
     }
   }
   function runCpu(p) {
     const inputs = new Map(p.inputs),
-      values = [];
+      values = [], outputs = new Map();
+    const used = new Set(p.steps.flatMap(s=>s.args.filter(a=>a.kind==='step').map(a=>a.index)));
+    const feedback = new Set(p.feedback.values());
+    const outputIds = new Map(p.outputs.map(id=>[p.ids.get(id),id]));
     for (let iteration = 0; iteration < p.iterations; iteration++) {
       for (let i = 0; i < p.steps.length; i++) {
         const s = p.steps[i];
         const args = s.args.map((a) =>
           a.input ? resolve(inputs.get(a.input)) : resolve(a),
         );
-        values[i] = cpuCall(s.f, args);
+        const final=iteration===p.iterations-1;
+        values[i] = cpuCall(s.f, args, (data,borrowed)=>{
+          if(final && outputIds.has(i)) outputs.set(outputIds.get(i),unpack(data.words,s.f.result));
+          return used.has(i) || (!final && feedback.has(i))
+            ? (borrowed ? {...data,words:data.words.slice()} : data) : null;
+        });
       }
       for (const [input, step] of p.feedback)
         inputs.set(input, { kind: "value", value: values[step] });
@@ -355,12 +389,7 @@ export async function loadInk(
           : values[a.index];
     }
     return {
-      values: Object.fromEntries(
-        p.outputs.map((id) => [
-          id,
-          unpack(values[p.ids.get(id)].words, p.steps[p.ids.get(id)].f.result),
-        ]),
-      ),
+      values: Object.fromEntries(p.outputs.map(id=>[id,outputs.get(id)])),
       counters: { upload_bytes: 0, readback_bytes: 0, dispatches: 0 },
     };
   }
@@ -381,15 +410,9 @@ export async function loadInk(
     return type.kind === 'u64' || ((type.kind === 'list' || type.kind === 'vector') && hasU64(type.element)) || (type.kind === 'record' && type.fields.some(f=>hasU64(f.type)));
   }
   function javascriptInput(words, type) {
-    // Auto profiles may start with transport snapshots. U64 native values are BigInt.
-    const value=unpack(words,type);
-    function native(v,t) {
-      if(t.kind === 'u64') return BigInt(v);
-      if(t.kind === 'list' || t.kind === 'vector') return v.map(x=>native(x,t.element));
-      if(t.kind === 'record') return Object.fromEntries(t.fields.map(f=>[f.name,native(v[f.name],f.type)]));
-      return v;
-    }
-    return hasU64(type) ? native(value,type) : value;
+    // Decode native BigInt in one pass instead of JSON U64 then reconversion.
+    if(type.kind === 'list' && type.element.kind === 'u32') return words;
+    return unpack(words,type,true);
   }
   async function runJavascript(p) {
     const inputs=new Map(p.inputs),values=[];
@@ -403,19 +426,27 @@ export async function loadInk(
       }
       for(const [input,stage] of p.feedback)inputs.set(input,{kind:'value',value:values[stage]});
     }
-    return {values:Object.fromEntries(p.outputs.map(id=>{const i=p.ids.get(id);return [id,p.steps[i].f.output(values[i])];})),counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
+    return {values:Object.fromEntries(p.outputs.map(id=>{
+      const i=p.ids.get(id),f=p.steps[i].f,value=f.output(values[i]);
+      // Packed requests retain their owned Array output convention even when
+      // an identity returns the private captured U32 transport directly.
+      return [id,!p.native && f.result.kind==='list' && f.result.element.kind==='u32' && value instanceof Uint32Array ? Array.from(value) : value];
+    })),counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
   }
   async function execute(p, { backend = defaultBackend } = {}) {
     if(closed) fail('Ink runtime is closed');
     if(backend === 'javascript') return {...await runJavascript(p),backend,reason:'explicit backend selection'};
-    await ensureCpu();
-    if(backend === 'cpu') return {...runCpu(p),backend,reason:'explicit backend selection'};
     if(backend === 'gpu-required' && p.reason)fail(p.reason);
-    if(backend === 'gpu' && p.reason) return {...runCpu(p),backend:'cpu',reason:p.reason};
-    const key=JSON.stringify([manifest.core_sha256,p.steps.map(s=>[s.f.index,s.args.map(a=>[a.kind,a.index,a.count])]),p.iterations,[...p.feedback],p.outputs,p.constants.map(c=>[c.type,c.count,Array.from(c.words.subarray(0,8))])]);
-    const candidates=[{name:'cpu',startupMs:cpuStartup,run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
+    if(backend === 'cpu'){await ensureCpu();return {...runCpu(p),backend,reason:'explicit backend selection'};}
+    if(backend === 'gpu' && p.reason){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:p.reason};}
+    const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
+    const graphMode=p.steps.some(s=>s.f.graph_required);
+    const features={input_elements:p.constants.reduce((n,c)=>n+(c.type.kind==='list'?c.count:0),0),input_bytes:p.constants.reduce((n,c)=>n+c.words.byteLength,0),output_capacity_elements:p.outputs.reduce((n,id)=>n+(p.steps[p.ids.get(id)].count??0),0),dispatches:p.steps.reduce((n,s)=>n+(graphMode?s.f.graph.nodes.length:(s.count?1:0)),0)*p.iterations,iterations:p.iterations};
+    const key=policy==='profile'?JSON.stringify([scope,p.steps.map(s=>[s.f.index,s.args.map(a=>[a.kind,a.index,a.count])]),p.iterations,[...p.feedback],p.outputs,p.constants.map(c=>[c.type,c.count,Array.from(c.words.subarray(0,8))])]):scope;
+
+    const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
     if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:()=>adapter.prepare(p),run:()=>adapter.run(p)});
-    const outcome=await selector.run(key,candidates,backend);
+    const outcome=await selector.run(key,candidates,backend,{scope,boundary:'captured-owned',features});
     return {...outcome.result,backend:outcome.backend,reason:outcome.reason,profile:outcome.profile};
   }
   function serial(fn) {
@@ -427,11 +458,11 @@ export async function loadInk(
     let prepared;
     try {
       if(closed) fail('Ink runtime is closed');
-      prepared = compilePlan(plan, functions, (options?.backend ?? defaultBackend) === 'javascript');
+      prepared = compilePlan(plan, functions, resolveBackend(options?.backend ?? defaultBackend) === 'javascript');
     } catch (e) {
       return Promise.reject(e);
     }
-    return serial(() => execute(prepared, { ...options }));
+    return serial(() => execute(prepared, { ...options,backend:resolveBackend(options?.backend??defaultBackend) }));
   }
   const runtime = {
     manifest,
@@ -452,9 +483,9 @@ export async function loadInk(
         await ensureCpu();
         const workspace=createPackedCall(cpu,f.index,packed,destination.length*width(f.result.element));
         try {
-          const words=workspace.run(), value=javascriptInput(words,f.result);
-          for(let i=0;i<value.length;i++)destination[i]=value[i];
-          return {count:value.length,backend,countUnit:'elements'};
+          const words=workspace.run();
+          unpack(words,f.result,true,destination);
+          return {count:words.length/width(f.result.element),backend,countUnit:'elements'};
         } finally {workspace.close();}
       });
     },
@@ -468,9 +499,18 @@ export async function loadInk(
       const instance=await instantiateCpu();
       return createPackedCall(instance,f.index,packed,capacityWords);
     },
+    prepareGpuPipeline: plan => {
+      let prepared;
+      try {if(closed)fail('Ink runtime is closed');prepared=compilePlan(plan,functions,false);if(!gpu)fail('GPU disabled by host option');if(prepared.reason)fail(prepared.reason);}
+      catch(error){return Promise.reject(error);}
+      return serial(async()=>{
+        if(closed)fail('Ink runtime is closed');const call=await adapter.capture(prepared);
+        return {setup:call.setup,run:()=>serial(async()=>{if(closed)fail('Ink runtime is closed');const result=await call.run();return {...result,backend:'gpu',value:prepared.outputs.length===1?result.values[prepared.outputs[0]]:undefined};}),close:()=>serial(()=>call.close())};
+      });
+    },
     pipeline: submit,
     call: (name, args, options) => {
-      const backend=options?.backend ?? defaultBackend;
+      const backend=resolveBackend(options?.backend ?? defaultBackend);
       if(backend === 'cpu') {
         const f=functions.get(name);
         if(!f) return Promise.reject(Error(`unknown function ${name}`));
@@ -482,7 +522,7 @@ export async function loadInk(
         return serial(async()=>{
           if(closed) fail('Ink runtime is closed');
           await ensureCpu();
-          const result=cpuCall(f,packed),value=unpack(result.words,f.result);
+          const value=cpuCall(f,packed,data=>unpack(data.words,f.result));
           return {value,values:{result:value},backend,reason:'explicit backend selection',counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
         });
       }

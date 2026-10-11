@@ -451,7 +451,7 @@ pub fn prepare(
     }
     let (mut manifest, words, mut command) = match target {
         Target::JavaScript => {
-            let e = ink_lowering_js::definition::lower(definition)?;
+            let e = ink_lowering_js::portable_definition::lower(definition)?;
             fs::write(stem.with_extension("mjs"), e.javascript).map_err(|e| e.to_string())?;
             let runner = directory.join("definition-js-runner.mjs");
             fs::write(&runner, JAVASCRIPT_RUNNER).map_err(|e| e.to_string())?;
