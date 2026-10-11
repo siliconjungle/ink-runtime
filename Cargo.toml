@@ -15,4 +15,3 @@ sha2 = "0.10"
 num-bigint = "0.4"
 num-traits = "0.2"
 
-ink-lowering-rust = { git = "https://github.com/siliconjungle/ink-lowering-rust", rev = "67e75c44589934ec32aa57b5b0694cc99f963ff0" }

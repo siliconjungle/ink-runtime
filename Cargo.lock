@@ -135,7 +135,6 @@ dependencies = [
  "ink-lowering-c",
  "ink-lowering-gpu",
  "ink-lowering-js",
- "ink-lowering-rust",
  "ink-lowering-wasm",
  "num-bigint",
  "num-traits",
