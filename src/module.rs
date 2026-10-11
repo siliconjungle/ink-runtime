@@ -11,6 +11,11 @@ fn expr(e: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet<String>) {
                 expr(e, calls, types)
             }
         }
+        Expr::Var(n) => {
+            if let Some((owner, _)) = n.rsplit_once('.') {
+                types.insert(owner.to_owned());
+            }
+        }
         Expr::Record(n, fs) => {
             types.insert(n.clone());
             for (_, e) in fs {
@@ -28,7 +33,11 @@ fn expr(e: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet<String>) {
             expr(a, calls, types);
             expr(b, calls, types)
         }
-        Expr::Neg(a) | Expr::Lambda(_, a) | Expr::Field(a, _) | Expr::Try(a) => {
+        Expr::Field(a, _) => {
+            if let Expr::Var(owner) = a.as_ref() { types.insert(owner.clone()); }
+            expr(a, calls, types)
+        }
+        Expr::Neg(a) | Expr::Lambda(_, a) | Expr::Try(a) => {
             expr(a, calls, types)
         }
         Expr::Method(a, _, xs) => {
@@ -45,8 +54,8 @@ fn ty(t: &Type, names: &mut BTreeSet<String>) {
         Type::Named(n) => {
             names.insert(n.clone());
         }
-        Type::List(t) | Type::Option(t) | Type::Vector(t, _) => ty(t, names),
-        Type::Result(a, b) | Type::Table(a, b) => {
+        Type::List(t) | Type::Buffer(t) | Type::Option(t) | Type::Vector(t, _) => ty(t, names),
+        Type::Result(a, b) | Type::Map(a, b) | Type::Table(a, b) => {
             ty(a, names);
             ty(b, names)
         }
@@ -239,6 +248,13 @@ fn emit_checked(
 mod tests {
     use super::gpu_entry_eligible;
     use serde_json::json;
+    #[test]
+    fn closure_retains_transitive_owned_types_and_enum_constants() {
+        let p=ink_core::syntax::parse("module closure_types;record Item{value:u32,}record Work{items:Buffer<Item>,}enum E{A,B,}fn f(work:Work)->Bool{return E.A!=E.B;}").unwrap();
+        let checked=super::closure(&p,"f").unwrap();
+        assert!(checked.program().records.contains_key("Item"));
+        assert!(checked.program().enums.contains_key("E"));
+    }
     #[test]
     fn graph_only_gpu_entries_are_eligible_in_mixed_modules() {
         assert!(gpu_entry_eligible(
