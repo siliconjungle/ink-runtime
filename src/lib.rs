@@ -109,7 +109,11 @@ fn assemble(
     put(dir, "manifest.json", &manifest)?;
     put(dir, "program.mjs", &javascript.javascript)?;
     if compute {
-        put(dir, "prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs"))?;
+        put(
+            dir,
+            "prepared-wasm.mjs",
+            include_str!("../hosts/prepared-wasm.mjs"),
+        )?;
     }
     put(
         dir,
@@ -214,7 +218,11 @@ fn assemble(
     put(dir, "native/src/assets.rs", assets)
 }
 
-pub const STATE_WASM_ABI: &str = include_str!("../hosts/state-wasm-support.rs");
+pub const STATE_WASM_ABI: &str = concat!(
+    include_str!("../hosts/state-wasm-support.rs"),
+    "\n",
+    include_str!("../hosts/parallel-abi.rs")
+);
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
 pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {

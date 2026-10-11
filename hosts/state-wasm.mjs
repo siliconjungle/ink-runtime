@@ -1,3 +1,6 @@
+const __wasmPending=[];
+const __wasmBrowserWorker=typeof WorkerGlobalScope==='function'&&globalThis instanceof WorkerGlobalScope&&new URL(globalThis.location.href).searchParams.get('inkWasmParallelWorker')==='1';
+if(__wasmBrowserWorker)globalThis.onmessage=e=>__wasmPending.push(e.data);
 // Browser/Node host adapter. No Node-specific imports; integers stay exact.
 export function stringifyExactJSON(value) {
   const seen=new Set();
@@ -76,10 +79,45 @@ export class StatefulModule {
     if(!(this.exports.memory instanceof WebAssembly.Memory))throw new AbiError('Missing Wasm memory');
     this.encoder=new TextEncoder();this.decoder=new TextDecoder('utf-8',{fatal:true});
   }
-  static async instantiate(source) {
+  static async instantiate(source,options={}) {
+    const requested=options.workers??__wasmWorkers;
+    if(!Number.isInteger(requested)||requested<1||requested>32)throw new AbiError('worker count must be 1..32');
     const module=source instanceof WebAssembly.Module?source:await WebAssembly.compile(source);
-    if(WebAssembly.Module.imports(module).length)throw new AbiError('This ABI expects a module without host imports');
-    return new StatefulModule(await WebAssembly.instantiate(module,{}));
+    const imports=WebAssembly.Module.imports(module);
+    if(imports.some(i=>i.module!=='ink_parallel'||i.name!=='run'||i.kind!=='function'))throw new AbiError('Unsupported Wasm host import');
+    const holder={host:null};
+    const instance=await WebAssembly.instantiate(module,{ink_parallel:{run:(ptr,len)=>holder.host.runParallel(ptr,len)}});
+    const host=new StatefulModule(instance);host.compiled=module;host.parallelLeaf=options.leaf??false;host.workerCount=requested;host.parallelStats={dispatches:0,workers:0,workerIds:new Set(),lastWorkerIds:new Set()};holder.host=host;return host;
+  }
+  parallelStatistics(){return {...this.parallelStats,workerIds:[...this.parallelStats.workerIds],lastWorkerIds:[...this.parallelStats.lastWorkerIds]};}
+  recordParallelStatistics(stats){this.parallelStats.lastWorkerIds=new Set(stats.lastWorkerIds);this.parallelStats.dispatches+=stats.dispatches;this.parallelStats.workers+=stats.workers;stats.workerIds.forEach(id=>this.parallelStats.workerIds.add(id));}
+  runParallel(ptr,len){
+    try{return this.runParallelInner(ptr,len);}catch(error){
+      const bytes=this.encoder.encode(stringifyExactJSON({error:String(error?.message??error)}));
+      const out=this.call('lang_parallel_alloc',bytes.length)>>>0;
+      if(!out)return 0;new Uint8Array(this.exports.memory.buffer,out,bytes.length).set(bytes);return bytes.length;
+    }
+  }
+  runParallelInner(ptr,len){
+    const task=parseExactJSON(this.decoder.decode(new Uint8Array(this.exports.memory.buffer,ptr,len)));
+    const count=this.parallelLeaf?1:Math.max(1,Math.min(this.workerCount,Math.floor(task.items.length/Math.max(1,Number(task.grain)))));
+    let values=[];
+    if(count===1){task.start=0;values=this.executeParallel(task);}
+    else{
+      if(typeof SharedArrayBuffer!=='function')throw new AbiError('Wasm parallel workers require shared memory and browser cross-origin isolation');
+      if(!__wasmThreads&&!(typeof WorkerGlobalScope==='function'&&globalThis instanceof WorkerGlobalScope))throw new AbiError('Browser parallel work must use pureAsync or invokeAsync');
+      const chunk=Math.ceil(task.items.length/count),jobs=[];
+      try{
+        for(let start=0;start<task.items.length;start+=chunk){const job={mode:'callback',module:this.compiled,task:{...task,start,items:task.items.slice(start,start+chunk)},header:new SharedArrayBuffer(12),data:new SharedArrayBuffer(16*1024*1024),id:start/chunk+1};jobs.push({job,worker:__wasmWorker(job)});}
+        this.parallelStats.lastWorkerIds.clear();this.parallelStats.dispatches++;this.parallelStats.workers+=jobs.length;
+        for(const {job} of jobs){const h=new Int32Array(job.header);if(Atomics.wait(h,0,0,60000)==='timed-out')throw new AbiError('Wasm parallel worker timeout');const message=parseExactJSON(this.decoder.decode(new Uint8Array(job.data,0,Atomics.load(h,1)).slice()));if(message.error)throw new AbiError(message.error);if(Atomics.load(h,0)!==1)throw new AbiError('Wasm worker failed');this.parallelStats.workerIds.add(Atomics.load(h,2));this.parallelStats.lastWorkerIds.add(Atomics.load(h,2));for(const value of message.ok)values.push(value);}
+      }finally{for(const {worker} of jobs)__wasmRelease(worker);}
+    }
+    const bytes=this.encoder.encode(stringifyExactJSON({ok:values}));const out=this.call('lang_parallel_alloc',bytes.length)>>>0;if(!out)throw new AbiError('Wasm parallel output allocation');new Uint8Array(this.exports.memory.buffer,out,bytes.length).set(bytes);return bytes.length;
+  }
+  executeParallel(task){
+    const bytes=this.encoder.encode(stringifyExactJSON(task));const ptr=this.call('lang_parallel_alloc',bytes.length)>>>0;if(!ptr)throw new AbiError('Wasm parallel task allocation');new Uint8Array(this.exports.memory.buffer,ptr,bytes.length).set(bytes);
+    const length=this.call('lang_parallel_worker',ptr,bytes.length)>>>0;if(!length)throw new AbiError('Wasm parallel task failed');const output=this.call('lang_parallel_ptr')>>>0;const reply=parseExactJSON(this.decoder.decode(new Uint8Array(this.exports.memory.buffer,output,length)));if(reply.error)throw new AbiError(reply.error);return reply.ok;
   }
   call(name,...args) {
     if(this.trapped)throw new AbiError('Wasm instance trapped; restore a checkpoint in a fresh instance');
@@ -122,8 +160,14 @@ export class StatefulModule {
   }
 }
 export class StateInstance {
-  constructor(module,handle){this.module=module;this.handle=handle;this.disposed=false;}
-  live(){if(this.disposed)throw new AbiError('State handle was disposed');}
+  constructor(module,handle){this.module=module;this.handle=handle;this.disposed=false;this.busy=false;}
+  live(){if(this.disposed)throw new AbiError('State handle was disposed');if(this.busy)throw new AbiError('State operation already in progress');}
+  async pureAsync(pure,args){this.live();const reply=await __wasmAsync({mode:'pure',module:this.module.compiled,pure,args,workers:this.module.workerCount});this.module.recordParallelStatistics(reply.statistics);return reply.value;}
+  async invokeAsync(call,args){
+    this.live();const snapshot=this.snapshot();this.busy=true;
+    try{const reply=await __wasmAsync({mode:'invoke',module:this.module.compiled,call,args,snapshot,workers:this.module.workerCount});this.module.recordParallelStatistics(reply.statistics);const replacement=this.module.restore(reply.snapshot);const old=this.handle;if(this.module.call('lang_state_drop',old)!==1){replacement.dispose();throw this.module.error();}this.handle=replacement.handle;replacement.disposed=true;return reply.value;}
+    finally{this.busy=false;}
+  }
   invoke(call,args) {
     this.live();const m=this.module;
     const bytes=m.encoder.encode(stringifyExactJSON({call,args}));
@@ -147,3 +191,27 @@ export class StateInstance {
   }
   dispose(){this.live();if(this.module.call('lang_state_drop',this.handle)!==1)throw this.module.error();this.disposed=true;}
 }
+
+// Host workers instantiate the same compiled module. Callback code is selected by
+// a compiler-generated index, never supplied source or a replacement AST.
+const __wasmThreads=typeof process==='object'&&process.versions?.node?await import('node:worker_threads'):null;
+const __wasmRequested=Number(__wasmThreads?process.env.INK_THREADS??4:Math.min(4,globalThis.navigator?.hardwareConcurrency??4));
+const __wasmWorkers=Math.min(32,Math.max(1,Number.isInteger(__wasmRequested)?__wasmRequested:4));
+let __wasmPool=[],__wasmInstanceId=0,__wasmCoordinatorSequence=0;
+async function __wasmWarmPool(count,coordinator){if(__wasmThreads)return;await Promise.all(Array.from({length:count},(_,index)=>new Promise((resolve,reject)=>{const w=__wasmWorker({mode:"warm",workerId:coordinator*32+index+1});w.onmessage=e=>{if(e.data.ready){w.__inkPooled=true;__wasmPool.push(w);resolve();}};w.onerror=e=>reject(new AbiError(e.message));})));}
+function __wasmRelease(w){if(w.__inkPooled)__wasmPool.push(w);else w.terminate();}
+function __wasmWorker(job){if(!__wasmThreads&&job.mode==="callback"){const w=__wasmPool.pop();if(!w)throw new AbiError("browser callback pool not ready");w.postMessage(job);return w;}if(__wasmThreads)return new __wasmThreads.Worker(new URL(import.meta.url),{workerData:{inkWasmParallel:job},execArgv:process.execArgv.filter(x=>!x.startsWith('--input-type'))});const url=new URL(import.meta.url);url.searchParams.set('inkWasmParallelWorker','1');const w=new Worker(url,{type:'module'});w.postMessage(job);return w;}
+function __wasmAsync(job){const worker=__wasmWorker({...job,coordinator:++__wasmCoordinatorSequence});return new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(new AbiError('Wasm worker invocation timeout')),300000);const finish=(error,reply)=>{clearTimeout(timer);worker.terminate();error?reject(error):resolve(reply);};const receive=reply=>reply.error?finish(new AbiError(reply.error)):finish(null,reply);if(__wasmThreads){worker.once('message',receive);worker.once('error',e=>finish(e));}else{worker.onmessage=e=>receive(e.data);worker.onerror=e=>finish(new AbiError(e.message));}});}
+async function __wasmTask(job){
+ if(job.mode==="warm"){__wasmInstanceId=job.workerId;globalThis.postMessage({ready:true});return;}
+ if(job.mode==='callback'){
+  const h=new Int32Array(job.header),data=new Uint8Array(job.data);let reply;
+  try{const host=await StatefulModule.instantiate(job.module,{leaf:true,workers:1});reply={ok:host.executeParallel(job.task)};}catch(e){reply={error:String(e?.message??e)};}
+  let bytes=new TextEncoder().encode(stringifyExactJSON(reply));if(bytes.length>data.length){reply={error:'Wasm worker result limit'};bytes=new TextEncoder().encode(stringifyExactJSON(reply));}data.set(bytes);Atomics.store(h,1,bytes.length);Atomics.store(h,2,__wasmThreads?.threadId??__wasmInstanceId);Atomics.store(h,0,reply.error?-1:1);Atomics.notify(h,0);return;
+ }
+ let reply;
+ try{await __wasmWarmPool(job.workers,job.coordinator);const host=await StatefulModule.instantiate(job.module,{workers:job.workers});const state=job.mode==='invoke'?host.restore(job.snapshot):host.create();try{const value=job.mode==='invoke'?state.invoke(job.call,job.args):state.pure(job.pure,job.args);reply={value,statistics:host.parallelStatistics(),...(job.mode==='invoke'?{snapshot:state.snapshot()}:{})};}finally{if(!host.trapped)state.dispose();}}catch(e){reply={error:String(e?.message??e)};}
+ if(__wasmThreads)__wasmThreads.parentPort.postMessage(reply);else globalThis.postMessage(reply);
+}
+if(__wasmThreads?.workerData?.inkWasmParallel)await __wasmTask(__wasmThreads.workerData.inkWasmParallel);
+else if(__wasmBrowserWorker){globalThis.onmessage=e=>__wasmTask(e.data);for(const job of __wasmPending)__wasmTask(job);}
