@@ -251,9 +251,6 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
             feedback.insert(input.clone(), i);
         }
     }
-    if constants.iter().any(|c| !c.finite) {
-        reason.get_or_insert("non-finite f32 inputs require CPU".into());
-    }
     let feedback_bytes = if steps
         .iter()
         .any(|s| s.f["graph_required"].as_bool() == Some(true))

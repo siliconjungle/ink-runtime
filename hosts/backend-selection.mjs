@@ -5,14 +5,16 @@ export function profileScope(manifest,entry){return JSON.stringify([manifest.cor
 export async function validateCostProfile(profile,targetKey){await selectionRequest({operation:'validate',profile,target_key:targetKey});return profile==null?null:structuredClone(profile);}
 export function createSelector({policy='adaptive',staticBackend='cpu',costProfile=null,targetKey=''}={}){
  const options=structuredClone({policy,static_backend:staticBackend,cost_profile:costProfile,target_key:targetKey});
+ const choose=(eligible,context={})=>selectionRequest({options,context,eligible});
  return {
+  choose,
   clear(){},
   async run(key,candidates,selection='auto',context={}){
    const required=selection==='gpu-required';if(required)selection='gpu';
    const baseline=candidates.find(c=>c.name==='cpu');if(!baseline)throw Error('compiled CPU baseline required');
    if(!['auto','cpu','javascript','gpu'].includes(selection))throw Error('invalid backend selection');
    let decision;
-   if(selection==='auto')decision=await selectionRequest({options,context,eligible:candidates.map(c=>c.name)});
+   if(selection==='auto')decision=await choose(candidates.map(c=>c.name),context);
    else decision={backend:selection,reason:'explicit backend selection'};
    let chosen=candidates.find(c=>c.name===decision.backend);
    if(!chosen){if(required)throw Error('GPU required but unavailable for this computation');if(selection==='gpu')decision={backend:'cpu',reason:'GPU unavailable for this computation'};else throw Error('backend unavailable for this computation');chosen=baseline;}

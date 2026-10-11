@@ -186,7 +186,10 @@ export async function loadInk(
   }
   let tail=Promise.resolve(), closed=false;
   const selector=createSelector({policy,staticBackend,costProfile,targetKey});
-  const resolveBackend=requested=>requested;
+  const staticChoice=policy==='static' ? (await selector.choose(['cpu','javascript',...(gpu?['gpu']:[])])).backend : null;
+  // Resolve only the native JS transport boundary early. Other static choices
+  // stay automatic until the shared contract sees actual device eligibility.
+  const resolveBackend=requested=>requested==='auto' && staticChoice==='javascript' ? 'javascript' : requested;
   const jsStart=performance.now();
   const javascript=await import(new URL("program.mjs",root));
   const jsStartup=performance.now()-jsStart;

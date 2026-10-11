@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 [dependencies]
-ink-lowering-rust = { git = "https://github.com/siliconjungle/ink-lowering-rust", rev = "7be6a1fb377e4506052a75f8c634fe306e7308da" }
+ink-lowering-rust = { git = "https://github.com/siliconjungle/ink-lowering-rust", rev = "21951a6a1519b764c2498edd1e0c5c4fc07d62e2" }
 ink-native-support = { git = "https://github.com/siliconjungle/ink-native-support", rev = "44f6d3f346a88bb91ad45e37be6b0c1d46269d6d" }
-ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "fb98632a0e6b80f08ffbdbd93bdbd782b2d06ab6" }
-ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "1025859b98f03a0910d71cdccfbc0397fd4be05d" }
-ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "43b88269b7b24ee2fe0497da89373390399073a7" }
-ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "a726cdacdc03bd45741d73e4f981af5e7ebc944c" }
-ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "1518072a7cb158db127ec3a64140b0230e55aea5" }
-ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "c47e8e49ae170b58bd1eaf8228d82119e1078124" }
+ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "841a1898ea1c6e8c69845b94aa5f1c79a151d55f" }
+ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "872a034d83e7da821af687329025528377177213" }
+ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "b2096798bfffffeaeb8c21b26215f423c369fc01" }
+ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "786cf9fe79fa40c8c4c243ff90913fd18d02439d" }
+ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "15cba8ebe42acb5e138dfcfe8303fbd5ee8b2e12" }
+ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "94262d19e594a877ff4ea7c30cadb13f2b24e7c8" }
 serde_json = { version="1", features=["float_roundtrip"] }
 sha2 = "0.10"
 num-bigint = "0.4"

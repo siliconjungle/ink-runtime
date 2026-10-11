@@ -1,3 +1,4 @@
+import {copySharedHostAssets} from './shared-host-assets.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,copyFile,writeFile,rm} from 'node:fs/promises';
@@ -8,13 +9,14 @@ const types=['u32','u64','f32'].map(kind=>({kind}));
 const functions=types.map((element,index)=>({index,name:element.kind,params:[{type:{kind:'list',element}}],result:{kind:'list',element},shader:null}));
 async function fixture(run) {
  const dir=await mkdtemp(join(tmpdir(),'ink-destination28-'));
+ await copySharedHostAssets(dir);
  for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),'export const createDevice=()=>({close(){}});');
- await writeFile(join(dir,'program.mjs'),`const copy=(xs,out)=>{for(let i=0;i<xs.length;i++)out[i]=xs[i];return xs.length};export const functions={u32:xs=>Array.from(xs),u64:xs=>Array.from(xs),f32:xs=>Array.from(xs)};export const functionsInto={u32:copy,u64:copy,f32:copy};`);
+ await writeFile(join(dir,'program.mjs'),`const copy=(xs,out)=>{for(let i=0;i<xs.length;i++)out[i]=xs[i];return xs.length};export const metadata={functions:[]};export const functions={u32:xs=>Array.from(xs),u64:xs=>Array.from(xs),f32:xs=>Array.from(xs)};export const functionsInto={u32:copy,u64:copy,f32:copy};`);
  const originalFetch=globalThis.fetch,originalInstantiate=WebAssembly.instantiate;
  let loads=0;
  globalThis.fetch=async url=>String(url).endsWith('manifest.json')?{json:async()=>({schema:2,functions})}:{arrayBuffer:async()=>new ArrayBuffer(0)};
- WebAssembly.instantiate=async()=>{
+ WebAssembly.instantiate=async(...args)=>{if(args[0]?.byteLength)return originalInstantiate(...args);
   loads++;let top=64;
   const memory=new WebAssembly.Memory({initial:1});
   return {instance:{exports:{memory,ink_compute_reset(){top=64},ink_alloc(n,width){let p=(top+7)&~7;top=p+Math.max(n,1)*width;return p},ink_compute_mark(){return top},ink_compute_rewind(mark){top=mark},ink_compute_into(index,pointers,lengths,dest){const table=new DataView(memory.buffer),p=table.getUint32(pointers,true),count=table.getUint32(lengths,true)*(index===1?2:1);new Uint32Array(memory.buffer,dest,count).set(new Uint32Array(memory.buffer,p,count));return count}}}};
