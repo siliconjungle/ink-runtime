@@ -154,6 +154,7 @@ function compilePlan(plan, functions, native = false) {
   }
   if (bytes > MAX_BYTES) reason ??= "GPU live-buffer budget exceeds 256 MiB";
   return {
+    native,
     constants,
     inputs,
     steps,
@@ -192,7 +193,7 @@ export async function loadInk(
   const jsStartup=performance.now()-jsStart;
   const functions=new Map(manifest.functions.map(f=>[f.name,{...f,javascript:javascript.functions[f.name],output:compileJavascriptOutput(f.result)}]));
   const adapter=createDevice({root, enabled:gpu, onLost:()=>selector.clear(),fail,width,unpack,MAX_BYTES});
-  function cpuCall(f, args) {
+  function cpuCall(f, args, consume) {
     cpu.ink_compute_reset();
     try {
       const ptrs = cpu.ink_alloc(args.length, 4),
@@ -219,7 +220,7 @@ export async function loadInk(
         const words = kind === 'u64'
           ? Uint32Array.of(Number(result & 4294967295n), Number((result >> 32n) & 4294967295n))
           : Uint32Array.of(result);
-        return { words, type: f.result, count: 1 };
+        return consume({ words, type: f.result, count: 1 }, false);
       }
       const header = cpu.ink_alloc(2, 4);
       cpu.ink_compute_call(f.index, ptrs, lengths, header, header + 4);
@@ -227,26 +228,36 @@ export async function loadInk(
         ptr = view.getUint32(header, true),
         count = view.getUint32(header + 4, true);
       if (count * 4 > MAX_BYTES) fail("CPU output exceeds 256 MiB budget");
-      const words = new Uint32Array(cpu.memory.buffer, ptr, count).slice();
-      return {
+      const words = new Uint32Array(cpu.memory.buffer, ptr, count);
+      // Decode terminal owned values while arena storage is still alive.
+      // Only packed intermediates that cross a reset need a transport copy.
+      return consume({
         words,
         type: f.result,
         count: f.result.kind === "list" ? count / width(f.result.element) : 1,
-      };
+      }, true);
     } finally {
       cpu.ink_compute_reset();
     }
   }
   function runCpu(p) {
     const inputs = new Map(p.inputs),
-      values = [];
+      values = [], outputs = new Map();
+    const used = new Set(p.steps.flatMap(s=>s.args.filter(a=>a.kind==='step').map(a=>a.index)));
+    const feedback = new Set(p.feedback.values());
+    const outputIds = new Map(p.outputs.map(id=>[p.ids.get(id),id]));
     for (let iteration = 0; iteration < p.iterations; iteration++) {
       for (let i = 0; i < p.steps.length; i++) {
         const s = p.steps[i];
         const args = s.args.map((a) =>
           a.input ? resolve(inputs.get(a.input)) : resolve(a),
         );
-        values[i] = cpuCall(s.f, args);
+        const final=iteration===p.iterations-1;
+        values[i] = cpuCall(s.f, args, (data,borrowed)=>{
+          if(final && outputIds.has(i)) outputs.set(outputIds.get(i),unpack(data.words,s.f.result));
+          return used.has(i) || (!final && feedback.has(i))
+            ? (borrowed ? {...data,words:data.words.slice()} : data) : null;
+        });
       }
       for (const [input, step] of p.feedback)
         inputs.set(input, { kind: "value", value: values[step] });
@@ -259,12 +270,7 @@ export async function loadInk(
           : values[a.index];
     }
     return {
-      values: Object.fromEntries(
-        p.outputs.map((id) => [
-          id,
-          unpack(values[p.ids.get(id)].words, p.steps[p.ids.get(id)].f.result),
-        ]),
-      ),
+      values: Object.fromEntries(p.outputs.map(id=>[id,outputs.get(id)])),
       counters: { upload_bytes: 0, readback_bytes: 0, dispatches: 0 },
     };
   }
@@ -285,15 +291,9 @@ export async function loadInk(
     return type.kind === 'u64' || ((type.kind === 'list' || type.kind === 'vector') && hasU64(type.element)) || (type.kind === 'record' && type.fields.some(f=>hasU64(f.type)));
   }
   function javascriptInput(words, type) {
-    // Auto profiles may start with transport snapshots. U64 native values are BigInt.
-    const value=unpack(words,type);
-    function native(v,t) {
-      if(t.kind === 'u64') return BigInt(v);
-      if(t.kind === 'list' || t.kind === 'vector') return v.map(x=>native(x,t.element));
-      if(t.kind === 'record') return Object.fromEntries(t.fields.map(f=>[f.name,native(v[f.name],f.type)]));
-      return v;
-    }
-    return hasU64(type) ? native(value,type) : value;
+    // Decode native BigInt in one pass instead of JSON U64 then reconversion.
+    if(type.kind === 'list' && type.element.kind === 'u32') return words;
+    return unpack(words,type,true);
   }
   function runJavascript(p) {
     const inputs=new Map(p.inputs),values=[];
@@ -307,7 +307,12 @@ export async function loadInk(
       }
       for(const [input,stage] of p.feedback)inputs.set(input,{kind:'value',value:values[stage]});
     }
-    return {values:Object.fromEntries(p.outputs.map(id=>{const i=p.ids.get(id);return [id,p.steps[i].f.output(values[i])];})),counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
+    return {values:Object.fromEntries(p.outputs.map(id=>{
+      const i=p.ids.get(id),f=p.steps[i].f,value=f.output(values[i]);
+      // Packed requests retain their owned Array output convention even when
+      // an identity returns the private captured U32 transport directly.
+      return [id,!p.native && f.result.kind==='list' && f.result.element.kind==='u32' && value instanceof Uint32Array ? Array.from(value) : value];
+    })),counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
   }
   async function execute(p, { backend = defaultBackend } = {}) {
     if(closed) fail('Ink runtime is closed');
@@ -358,9 +363,9 @@ export async function loadInk(
         await ensureCpu();
         const workspace=createPackedCall(cpu,f.index,packed,destination.length*width(f.result.element));
         try {
-          const words=workspace.run(), value=javascriptInput(words,f.result);
-          for(let i=0;i<value.length;i++)destination[i]=value[i];
-          return {count:value.length,backend,countUnit:'elements'};
+          const words=workspace.run();
+          unpack(words,f.result,true,destination);
+          return {count:words.length/width(f.result.element),backend,countUnit:'elements'};
         } finally {workspace.close();}
       });
     },
@@ -397,7 +402,7 @@ export async function loadInk(
         return serial(async()=>{
           if(closed) fail('Ink runtime is closed');
           await ensureCpu();
-          const result=cpuCall(f,packed),value=unpack(result.words,f.result);
+          const value=cpuCall(f,packed,data=>unpack(data.words,f.result));
           return {value,values:{result:value},backend,reason:'explicit backend selection',counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
         });
       }
