@@ -65,3 +65,28 @@ test('real file replacement, ownership, recovery and corruption rejection',async
   const store=await openFileStore(path);await store.close();
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+test('retained boundaries restore state after uncertain append, before and after publication',async()=>{
+ for(const after of [false,true]){
+  const dir=await mkdtemp(join(tmpdir(),'ink-journal-failure-')),path=join(dir,'state');let checkpoints=0,restores=0;
+  const fast=s=>{let prior;const inner=state(s);return {...inner,get version(){return s.version;},get outbox(){return s.outbox;},checkpoint(){checkpoints++;return inner.checkpoint();},beginTransaction(){prior={...s,outbox:s.outbox.slice()};return true;},commitTransaction(){prior=null;},rollbackTransaction(){Object.assign(s,prior);prior=null;}};};
+  const f={create:()=>fast({version:0n,value:0n,outbox:[]}),restore:bytes=>{restores++;return fast(parseExactJSON(decoder.decode(bytes)));}};
+  try{
+   const store=await openFileStore(path),append=store.append;let armed=false;
+   store.append=async(...args)=>{if(!armed)return append(...args);if(after)await append(...args);throw Error('power loss');};
+   let host=await DurableState.open({factory:f,store,checkpointInterval:4});
+   await host.invoke('a','add',[2]);await host.invoke('read','read',[]);assert.equal(checkpoints,1);assert.equal(restores,0);
+   armed=true;await assert.rejects(host.invoke('lost','add',[7]),RecoveryRequired);await assert.rejects(host.checkpoint(),RecoveryRequired);await host.close();
+   host=await DurableState.open({factory:f,store:await openFileStore(path)});assert.equal(await host.version(),after?2n:1n);assert.equal((await host.invoke('lost','add',[7])).value,9n);assert.equal(await host.version(),2n);await host.close();
+  }finally{await rm(dir,{recursive:true,force:true});}
+ }
+});
+test('legacy receipt field order remains retryable without executing the query',async()=>{
+ const snapshot=encoder.encode(stringifyExactJSON({version:0n,value:0n,outbox:[]}));
+ const request=JSON.stringify({o:[['call','read'],['args',{a:[]}]]}),reply=JSON.stringify({o:[['value',{b:'0'}],['host',{n:'0'}],['zero',{n:'-0'}]]});
+ const header=encoder.encode(JSON.stringify({format:'ink-durable-state-v1',receiptLimit:256,receipts:[{id:'legacy',request,reply}]}));
+ const body=new Uint8Array(8+header.length+snapshot.length);body.set([73,78,75,68]);new DataView(body.buffer).setUint32(4,header.length,true);body.set(header,8);body.set(snapshot,8+header.length);
+ const bytes=new Uint8Array(body.length+32);bytes.set(body);bytes.set(new Uint8Array(await crypto.subtle.digest('SHA-256',body)),body.length);
+ const store=memory();await store.commit(null,bytes);let called=false;
+ const f={...factory,restore:bytes=>{const s=factory.restore(bytes);s.invoke=()=>{called=true;throw Error('retry executed');};return s;}};
+ const host=await DurableState.open({factory:f,store});const result=await host.invoke('legacy','read',[]);assert.equal(called,false);assert.equal(result.value,0n);assert(Object.is(result.zero,-0));await host.close();
+});

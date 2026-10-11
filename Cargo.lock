@@ -65,7 +65,7 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-abi?rev=841a1898ea1c6e8c69845b94aa5f1c79a151d55f#841a1898ea1c6e8c69845b94aa5f1c79a151d55f"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=8808327ff206fcf4764bbfbe1480eb2dc89599b1#8808327ff206fcf4764bbfbe1480eb2dc89599b1"
 dependencies = [
  "serde",
  "serde_json",
@@ -74,7 +74,7 @@ dependencies = [
 [[package]]
 name = "ink-core"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lang?rev=4422e9c60395c1c492ea0594f93cc5574e797f2e#4422e9c60395c1c492ea0594f93cc5574e797f2e"
+source = "git+https://github.com/siliconjungle/ink-lang?rev=033628e8e06feaec99c42217b6be8d96ea161a2f#033628e8e06feaec99c42217b6be8d96ea161a2f"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -86,7 +86,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=8824b0ac1b22947ecf6ea46b4217bfa68d47da5b#8824b0ac1b22947ecf6ea46b4217bfa68d47da5b"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=e7e1a74f409d4fcacdee1dcdb60ed5ab47ebf80a#e7e1a74f409d4fcacdee1dcdb60ed5ab47ebf80a"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -97,7 +97,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=fb0282fd8f7673b754e67c00089d000a43440571#fb0282fd8f7673b754e67c00089d000a43440571"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=816203bb51acc120fa5c30da7c1decb1edb56552#816203bb51acc120fa5c30da7c1decb1edb56552"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=798090796e2bc778ab4c650ad056d8809b503c92#798090796e2bc778ab4c650ad056d8809b503c92"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=75a444af875b6b5cf6df8192a1ac2dc7e6acf10c#75a444af875b6b5cf6df8192a1ac2dc7e6acf10c"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-rust"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=03bc203a143aa57c0df0dc67a36a0a7d91065af4#03bc203a143aa57c0df0dc67a36a0a7d91065af4"
+source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=165db0748f34a76cb680dd36049ec66717d6e98f#165db0748f34a76cb680dd36049ec66717d6e98f"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -135,7 +135,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=b0448d861a8d4c5f4822c3d241da6ced2a2ea011#b0448d861a8d4c5f4822c3d241da6ced2a2ea011"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=1964c7ec36a52374d4d7e25e3f0912b4e66a1785#1964c7ec36a52374d4d7e25e3f0912b4e66a1785"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -145,7 +145,7 @@ dependencies = [
 [[package]]
 name = "ink-native-support"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-native-support?rev=f9e8ca6e3704e50531777bccdda20c7a278c244d#f9e8ca6e3704e50531777bccdda20c7a278c244d"
+source = "git+https://github.com/siliconjungle/ink-native-support?rev=9b5176c2104aadb40bc12c83cf243cbf9df46acc#9b5176c2104aadb40bc12c83cf243cbf9df46acc"
 
 [[package]]
 name = "ink-runtime"
@@ -259,9 +259,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.152"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1741ab7a6cc54a03a89b5d563ed60075c277d9e3cfa73ad0c1f23f23974703c6"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
@@ -283,9 +283,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.7"
+version = "3.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d62a2e0561533f2ca2561d0cf27fd9fedb640a1bf2616ff5d5c80d99017faadc"
+checksum = "01016da373cd8f7ef12624f796309f5c31ba8d646dd08856c02cd741d823c622"
 dependencies = [
  "proc-macro2",
  "quote",

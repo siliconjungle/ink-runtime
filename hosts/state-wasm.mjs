@@ -30,14 +30,16 @@ export function stringifyExactJSON(value) {
 }
 export function parseExactJSON(text) {
   let position=0;
+  const numberPattern=/-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
   const fail=()=>{throw new SyntaxError('Invalid JSON at '+position);};
   const space=()=>{while(' \n\r\t'.includes(text[position]) && position<text.length)position++;};
   function string() {
-    const start=position++;
+    const start=position++;let escaped=false;
     while(position<text.length) {
       const c=text[position++];
-      if(c==='"') return JSON.parse(text.slice(start,position));
-      if(c==='\\')position++;
+      if(c==='"') return escaped?JSON.parse(text.slice(start,position)):text.slice(start+1,position-1);
+      if(c<' ')fail();
+      if(c==='\\'){escaped=true;position++;}
     }
     fail();
   }
@@ -59,10 +61,10 @@ export function parseExactJSON(text) {
         space();const next=text[position++];if(next==='}')return result;if(next!==',')fail();
       }
     }
-    for(const [token,result] of [['true',true],['false',false],['null',null]]) {
-      if(text.startsWith(token,position)){position+=token.length;return result;}
-    }
-    const match=/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(text.slice(position));
+    if(text.startsWith('true',position)){position+=4;return true;}
+    if(text.startsWith('false',position)){position+=5;return false;}
+    if(text.startsWith('null',position)){position+=4;return null;}
+    numberPattern.lastIndex=position;const match=numberPattern.exec(text);
     if(!match)fail();position+=match[0].length;
     if(/^-?[0-9]+$/.test(match[0]))return BigInt(match[0]);
     const number=Number(match[0]);if(!Number.isFinite(number))fail();return number;
@@ -146,8 +148,18 @@ export class StatefulModule {
     new Uint8Array(this.exports.memory.buffer,ptr,bytes.length).set(bytes);
     return handle;
   }
+  text(handle) {
+    if(!handle)throw this.error();
+    try {
+      const ptr=this.call('lang_buffer_ptr',handle)>>>0;
+      const len=this.call('lang_buffer_len',handle)>>>0;
+      // Decode synchronously before freeing. Only the resulting owned string
+      // escapes; snapshots still use take() to return independent byte storage.
+      return this.decoder.decode(new Uint8Array(this.exports.memory.buffer,ptr,len));
+    } finally {this.release(handle);}
+  }
   response(handle) {
-    const message=parseExactJSON(this.decoder.decode(this.take(handle)));
+    const message=parseExactJSON(this.text(handle));
     if(message.error)throw new AbiError(message.error.message,message.error.committed);
     if(!Object.hasOwn(message,'ok'))throw new AbiError('Malformed Wasm response');
     return message.ok;
@@ -160,11 +172,11 @@ export class StatefulModule {
   }
 }
 export class StateInstance {
-  constructor(module,handle){this.module=module;this.handle=handle;this.disposed=false;this.busy=false;}
+  constructor(module,handle){this.module=module;this.handle=handle;this.disposed=false;this.busy=false;this.transaction=false;}
   live(){if(this.disposed)throw new AbiError('State handle was disposed');if(this.busy)throw new AbiError('State operation already in progress');}
   async pureAsync(pure,args){this.live();const reply=await __wasmAsync({mode:'pure',module:this.module.compiled,pure,args,workers:this.module.workerCount});this.module.recordParallelStatistics(reply.statistics);return reply.value;}
   async invokeAsync(call,args){
-    this.live();const snapshot=this.snapshot();this.busy=true;
+    this.live();if(this.transaction)throw new AbiError('Async handle replacement during state transaction');const snapshot=this.snapshot();this.busy=true;
     try{const reply=await __wasmAsync({mode:'invoke',module:this.module.compiled,call,args,snapshot,workers:this.module.workerCount});this.module.recordParallelStatistics(reply.statistics);const replacement=this.module.restore(reply.snapshot);const old=this.handle;if(this.module.call('lang_state_drop',old)!==1){replacement.dispose();throw this.module.error();}this.handle=replacement.handle;replacement.disposed=true;return reply.value;}
     finally{this.busy=false;}
   }
@@ -182,6 +194,9 @@ export class StateInstance {
     const input=m.input(bytes);
     try{return m.response(m.call('lang_invoke',this.handle,input)>>>0);}finally{m.release(input);}
   }
+  beginTransaction(){this.live();if(this.transaction)throw new AbiError('State transaction already in progress');if(typeof this.module.exports.lang_transaction_begin!=='function')return false;const code=this.module.call('lang_transaction_begin',this.handle);if(code===2)return false;if(code!==1)throw this.module.error();this.transaction=true;return true;}
+  commitTransaction(){this.live();if(!this.transaction)throw new AbiError('No state transaction');if(this.module.call('lang_transaction_commit',this.handle)!==1)throw this.module.error();this.transaction=false;}
+  rollbackTransaction(){this.live();if(!this.transaction)throw new AbiError('No state transaction');if(this.module.call('lang_transaction_rollback',this.handle)!==1)throw this.module.error();this.transaction=false;}
   snapshot(){this.live();return this.module.take(this.module.call('lang_checkpoint',this.handle)>>>0);}
   events(){this.live();return this.module.response(this.module.call('lang_events',this.handle)>>>0);}
   version(){this.live();return BigInt.asUintN(64,this.module.call('lang_version',this.handle));}
