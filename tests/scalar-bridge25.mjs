@@ -16,7 +16,7 @@ async function fixture(direct,run) {
  const dir=await mkdtemp(join(tmpdir(),'ink-scalar-bridge25-'));
  for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){},prepare(){throw Error('GPU disabled')},run(){throw Error('GPU disabled')}});");
- await writeFile(join(dir,'program.mjs'),"export const functions={u32:x=>x,i32:x=>x,bool:x=>x,f32:x=>x,u64:x=>x,vector:x=>x};");
+ await writeFile(join(dir,'program.mjs'),"export const metadata={functions:[]};export const functions={u32:x=>x,i32:x=>x,bool:x=>x,f32:x=>x,u64:x=>x,vector:x=>x};");
  const oldFetch=globalThis.fetch,oldInstantiate=WebAssembly.instantiate;
  const memory=new WebAssembly.Memory({initial:2});let top=64,failNext=false;
  const counts={allocations:[],generic:0,word32:0,word64:0,resets:0};

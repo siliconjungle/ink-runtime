@@ -10,7 +10,7 @@ async function fixture(run) {
  const dir=await mkdtemp(join(tmpdir(),'ink-destination28-'));
  for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),'export const createDevice=()=>({close(){}});');
- await writeFile(join(dir,'program.mjs'),`const copy=(xs,out)=>{for(let i=0;i<xs.length;i++)out[i]=xs[i];return xs.length};export const functions={u32:xs=>Array.from(xs),u64:xs=>Array.from(xs),f32:xs=>Array.from(xs)};export const functionsInto={u32:copy,u64:copy,f32:copy};`);
+ await writeFile(join(dir,'program.mjs'),`const copy=(xs,out)=>{for(let i=0;i<xs.length;i++)out[i]=xs[i];return xs.length};export const metadata={functions:[]};export const functions={u32:xs=>Array.from(xs),u64:xs=>Array.from(xs),f32:xs=>Array.from(xs)};export const functionsInto={u32:copy,u64:copy,f32:copy};`);
  const originalFetch=globalThis.fetch,originalInstantiate=WebAssembly.instantiate;
  let loads=0;
  globalThis.fetch=async url=>String(url).endsWith('manifest.json')?{json:async()=>({schema:2,functions})}:{arrayBuffer:async()=>new ArrayBuffer(0)};
