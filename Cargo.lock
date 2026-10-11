@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-rust"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=49cb7deb6180dd20d56d112f91fd1b29246dca25#49cb7deb6180dd20d56d112f91fd1b29246dca25"
+source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=1d00e5f6ac60ec1ad1ce4baf2a04423e6f081691#1d00e5f6ac60ec1ad1ce4baf2a04423e6f081691"
 dependencies = [
  "ink-abi",
  "ink-core",
