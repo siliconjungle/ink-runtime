@@ -10,7 +10,7 @@ export async function loadInk(base,{gpu=true,backend='auto',...options}={}){
  return {manifest,parallelStatistics:()=>({cpu:cpu.parallelStatistics(),javascript:js.parallelStatistics?.()}),createState:()=>cpu.create(),createJavaScriptState:()=>{if(!js.createState)throw Error('no state declarations');return js.createState();},restoreState:bytes=>cpu.restore(bytes),
   async call(name,args,{backend:chosen=backend,...callOptions}={}){
    if(!['auto','gpu','gpu-required','cpu','javascript'].includes(chosen))throw Error('invalid backend');
-   const parallel=js.metadata.functions.find(f=>f.name===name)?.parallel??false;
+   const parallel=js.metadata?.functions?.find(f=>f.name===name)?.parallel??false;
    const cpuCall=()=>parallel?pure.pureAsync(name,args):pure.pure(name,args);
    const f=manifest.functions.find(f=>f.name===name);if(!f)throw Error(`unknown Ink function ${name}`);
    if(chosen==='javascript')return {value:parallel?await js.callAsync(name,args):js.call(name,args),backend:'javascript',reason:'explicit backend selection'};

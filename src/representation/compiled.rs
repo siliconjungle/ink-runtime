@@ -460,7 +460,7 @@ pub fn prepare(
             (e.manifest, false, command)
         }
         Target::C | Target::CWasm => {
-            let e = ink_lowering_c::definition::lower(definition)?;
+            let e = ink_lowering_c::portable_definition::lower(definition)?;
             let source = stem.with_extension("c");
             fs::write(
                 &source,

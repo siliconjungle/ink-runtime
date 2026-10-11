@@ -624,9 +624,10 @@ impl FrozenV {
     fn value(self)->V{match self{Self::Unit=>V::Unit,Self::Bool(x)=>V::Bool(x),Self::U32(x)=>V::U32(x),Self::U64(x)=>V::U64(x),Self::I32(x)=>V::I32(x),Self::F32(x)=>V::F32(x),Self::Int(x)=>V::Int(x),Self::String(x)=>V::String(x),Self::Id(n,x)=>V::Id(n,x),Self::Enum(x)=>V::Enum(x),Self::Record(n,xs)=>V::Record(n,xs.into_iter().map(|(k,v)|(k,v.value())).collect()),Self::Option(x)=>V::Option(x.map(|x|Box::new(x.value()))),Self::Result(b,x)=>V::Result(b,Box::new(x.value())),Self::List(xs)=>V::List(xs.into_iter().map(Self::value).collect()),Self::Vector(xs)=>V::Vector(xs.into_iter().map(Self::value).collect())}}
 }
 // Diagnostic receipt counts actual entered OS threads, never planned jobs.
-static INK_PARALLEL_RECEIPT: std::sync::LazyLock<std::sync::Mutex<(u64,std::collections::BTreeSet<String>)>> = std::sync::LazyLock::new(||std::sync::Mutex::new((0,std::collections::BTreeSet::new())));
-fn ink_parallel_record_thread(){let mut r=INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock");r.0+=1;r.1.insert(format!("{:?}",std::thread::current().id()));}
-pub fn ink_parallel_statistics()->(u64,Vec<String>){let r=INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock");(r.0,r.1.iter().cloned().collect())}
+static INK_PARALLEL_RECEIPT: std::sync::LazyLock<std::sync::Mutex<(u64,std::collections::BTreeSet<String>,std::collections::BTreeSet<String>)>> = std::sync::LazyLock::new(||std::sync::Mutex::new((0,std::collections::BTreeSet::new(),std::collections::BTreeSet::new())));
+fn ink_parallel_start_receipt(){INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock").2.clear();}
+fn ink_parallel_record_thread(){let mut r=INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock");r.0+=1;let id=format!("{:?}",std::thread::current().id());r.1.insert(id.clone());r.2.insert(id);}
+pub fn ink_parallel_statistics()->(u64,Vec<String>,Vec<String>){let r=INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock");(r.0,r.1.iter().cloned().collect(),r.2.iter().cloned().collect())}
 
 // Pure callbacks get independent arenas; no table or event storage crosses workers.
 thread_local! {static PARALLEL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };}
@@ -670,7 +671,7 @@ pub unsafe extern "C" fn ink_parallel(ctx:*mut InkContext,input:u64,grain:u32,ca
             }
             Ok(out)
         };
-        let output=if workers==1 {run(0,&items)?} else {std::thread::scope(|scope|{
+        let output=if workers==1 {run(0,&items)?} else {ink_parallel_start_receipt();std::thread::scope(|scope|{
             let joins=items.chunks(chunk).enumerate().map(|(i,xs)|scope.spawn(move||{ink_parallel_record_thread();run(i*chunk,xs)})).collect::<Vec<_>>();
             let mut out=Vec::with_capacity(items.len());
             for task in joins {out.extend(task.join().map_err(|_|"parallel worker panicked")??);}
@@ -866,7 +867,7 @@ pub struct State {
     ctx: Box<InkContext>,
 }
 impl State {
-    pub fn parallel_statistics()->Json{let(n,ids)=ink_parallel_statistics();json!({"workers":n,"workerIds":ids})}
+    pub fn parallel_statistics()->Json{let(n,ids,last)=ink_parallel_statistics();json!({"workers":n,"workerIds":ids,"lastWorkerIds":last})}
     pub fn new() -> Self {
         let meta: Json =
             serde_json::from_str(include_str!("metadata.json")).expect("compiled metadata");
