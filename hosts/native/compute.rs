@@ -413,23 +413,30 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
     if constants.iter().any(|c| !c.finite) {
         reason.get_or_insert("non-finite f32 inputs require CPU".into());
     }
-    let feedback_bytes = feedback.values().try_fold(0usize, |bytes, i| {
-        let step = &steps[*i];
-        let words = step
-            .count
-            .unwrap_or(0)
-            .checked_mul(width(&step.f["result"]))
-            .and_then(|n| n.checked_add(usize::from(step.f["result"]["kind"] == "list")))
-            .ok_or("feedback snapshot size overflow")?;
-        bytes
-            .checked_add(
-                words
-                    .checked_mul(4)
-                    .ok_or("feedback snapshot size overflow")?
-                    .max(4),
-            )
-            .ok_or("feedback snapshot size overflow")
-    })?;
+    let feedback_bytes = if steps
+        .iter()
+        .any(|s| s.f["graph_required"].as_bool() == Some(true))
+    {
+        feedback.values().try_fold(0usize, |bytes, i| {
+            let step = &steps[*i];
+            let words = step
+                .count
+                .unwrap_or(0)
+                .checked_mul(width(&step.f["result"]))
+                .and_then(|n| n.checked_add(usize::from(step.f["result"]["kind"] == "list")))
+                .ok_or("feedback snapshot size overflow")?;
+            bytes
+                .checked_add(
+                    words
+                        .checked_mul(4)
+                        .ok_or("feedback snapshot size overflow")?
+                        .max(4),
+                )
+                .ok_or("feedback snapshot size overflow")
+        })?
+    } else {
+        0
+    };
     let bytes = feedback_bytes
         + constants
             .iter()
