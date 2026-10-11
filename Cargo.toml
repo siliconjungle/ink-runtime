@@ -12,6 +12,4 @@ ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", re
 serde_json = { version="1", features=["float_roundtrip"] }
 sha2 = "0.10"
 
-num-bigint = "0.4"
-num-traits = "0.2"
 
