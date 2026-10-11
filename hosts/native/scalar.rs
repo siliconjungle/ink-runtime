@@ -1,5 +1,5 @@
 //! Standalone native host: generated C CPU code, the same WGSL as the browser,
-//! and bounded measured selection. No Ink AST interpreter is linked.
+//! and bounded saved-model selection. No Ink AST interpreter is linked.
 mod assets;
 use serde_json::{json, Value};
 use std::{
@@ -20,22 +20,8 @@ extern "C" {
         scalars: *const u64,
     ) -> u64;
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    Auto,
-    Cpu,
-    Gpu,
-}
-impl Backend {
-    pub fn parse(s: &str) -> Result<Self> {
-        match s {
-            "auto" => Ok(Self::Auto),
-            "cpu" => Ok(Self::Cpu),
-            "gpu" => Ok(Self::Gpu),
-            _ => Err("backend must be auto, cpu or gpu".into()),
-        }
-    }
-}
+mod backend;
+pub use backend::Backend;
 #[derive(Clone)]
 enum Arg {
     Scalar(u64),
