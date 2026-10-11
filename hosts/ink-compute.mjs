@@ -1,6 +1,6 @@
 import * as deviceLowering from "./ink-device.mjs";
 const {createDevice} = deviceLowering;
-import {createSelector} from "./backend-selection.mjs";
+import {createSelector,profileScope} from "./backend-selection.mjs";
 import {createPackedCall} from "./prepared-wasm.mjs";
 // Trusted values ABI: caller supplies correctly typed, stable arguments.
 // Packing is transport for Wasm/GPU, never the JavaScript execution representation.
@@ -198,7 +198,7 @@ function compilePlan(plan, functions, native = false) {
     ids.set(step.id, steps.length);
     steps.push({ id: step.id, f, args, count, graphShape });
   }
-  const outputs = plan.outputs ?? [steps.at(-1).id];
+  let outputs = plan.outputs ?? [steps.at(-1).id];
   if (
     !Array.isArray(outputs) ||
     !outputs.length ||
@@ -206,6 +206,7 @@ function compilePlan(plan, functions, native = false) {
     outputs.some((x) => !ids.has(x))
   )
     fail("invalid pipeline outputs");
+  outputs = outputs.slice();
   const feedback = new Map();
   if(Object.keys(plan.feedback ?? {}).length && steps.some(s=>s.f.graph_required))
     reason ??= "GPU stage graph feedback is unsupported";
@@ -260,7 +261,7 @@ function compilePlan(plan, functions, native = false) {
 }
 export async function loadInk(
   base,
-  { gpu = true, backend: defaultBackend = "auto", expectedCalls=32, recheckEvery=32 } = {},
+  { gpu = true, backend: defaultBackend = "auto", expectedCalls=32, recheckEvery=32, policy="adaptive", staticBackend="cpu", costProfile=null, targetKey="" } = {},
 ) {
   const root = new URL(base, globalThis.location?.href ?? "http://localhost/");
   if (!root.pathname.endsWith("/")) root.pathname += "/";
@@ -278,7 +279,8 @@ export async function loadInk(
     cpuStartup=performance.now()-start;
   }
   let tail=Promise.resolve(), closed=false;
-  const selector=createSelector({expectedCalls,recheckEvery});
+  const selector=createSelector({expectedCalls,recheckEvery,policy,staticBackend,costProfile,targetKey});
+  const resolveBackend=requested=>requested==='auto'&&policy==='static'?staticBackend:requested;
   const jsStart=performance.now();
   const javascript=await import(new URL("program.mjs",root));
   const jsStartup=performance.now()-jsStart;
@@ -404,12 +406,15 @@ export async function loadInk(
   async function execute(p, { backend = defaultBackend } = {}) {
     if(closed) fail('Ink runtime is closed');
     if(backend === 'javascript') return {...runJavascript(p),backend,reason:'explicit backend selection'};
-    await ensureCpu();
-    if(backend === 'cpu') return {...runCpu(p),backend,reason:'explicit backend selection'};
-    const key=JSON.stringify([manifest.core_sha256,p.steps.map(s=>[s.f.index,s.args.map(a=>[a.kind,a.index,a.count])]),p.iterations,[...p.feedback],p.outputs,p.constants.map(c=>[c.type,c.count,Array.from(c.words.subarray(0,8))])]);
-    const candidates=[{name:'cpu',startupMs:cpuStartup,run:()=>runCpu(p)},{name:'javascript',startupMs:jsStartup,run:()=>runJavascript(p)}];
+    if(backend === 'cpu'){await ensureCpu();return {...runCpu(p),backend,reason:'explicit backend selection'};}
+    const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
+    const graphMode=p.steps.some(s=>s.f.graph_required);
+    const features={input_elements:p.constants.reduce((n,c)=>n+(c.type.kind==='list'?c.count:0),0),input_bytes:p.constants.reduce((n,c)=>n+c.words.byteLength,0),output_capacity_elements:p.outputs.reduce((n,id)=>n+(p.steps[p.ids.get(id)].count??0),0),dispatches:p.steps.reduce((n,s)=>n+(graphMode?s.f.graph.nodes.length:(s.count?1:0)),0)*p.iterations,iterations:p.iterations};
+    const key=policy==='profile'?JSON.stringify([scope,p.steps.map(s=>[s.f.index,s.args.map(a=>[a.kind,a.index,a.count])]),p.iterations,[...p.feedback],p.outputs,p.constants.map(c=>[c.type,c.count,Array.from(c.words.subarray(0,8))])]):scope;
+
+    const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',startupMs:jsStartup,run:()=>runJavascript(p)}];
     if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:()=>adapter.prepare(p),run:()=>adapter.run(p)});
-    const outcome=await selector.run(key,candidates,backend);
+    const outcome=await selector.run(key,candidates,backend,{scope,boundary:'captured-owned',features});
     return {...outcome.result,backend:outcome.backend,reason:outcome.reason,profile:outcome.profile};
   }
   function serial(fn) {
@@ -421,11 +426,11 @@ export async function loadInk(
     let prepared;
     try {
       if(closed) fail('Ink runtime is closed');
-      prepared = compilePlan(plan, functions, (options?.backend ?? defaultBackend) === 'javascript');
+      prepared = compilePlan(plan, functions, resolveBackend(options?.backend ?? defaultBackend) === 'javascript');
     } catch (e) {
       return Promise.reject(e);
     }
-    return serial(() => execute(prepared, { ...options }));
+    return serial(() => execute(prepared, { ...options,backend:resolveBackend(options?.backend??defaultBackend) }));
   }
   const runtime = {
     manifest,
@@ -462,9 +467,18 @@ export async function loadInk(
       const instance=await instantiateCpu();
       return createPackedCall(instance,f.index,packed,capacityWords);
     },
+    prepareGpuPipeline: plan => {
+      let prepared;
+      try {if(closed)fail('Ink runtime is closed');prepared=compilePlan(plan,functions,false);if(!gpu)fail('GPU disabled by host option');if(prepared.reason)fail(prepared.reason);}
+      catch(error){return Promise.reject(error);}
+      return serial(async()=>{
+        if(closed)fail('Ink runtime is closed');const call=await adapter.capture(prepared);
+        return {setup:call.setup,run:()=>serial(async()=>{if(closed)fail('Ink runtime is closed');const result=await call.run();return {...result,backend:'gpu',value:prepared.outputs.length===1?result.values[prepared.outputs[0]]:undefined};}),close:()=>serial(()=>call.close())};
+      });
+    },
     pipeline: submit,
     call: (name, args, options) => {
-      const backend=options?.backend ?? defaultBackend;
+      const backend=resolveBackend(options?.backend ?? defaultBackend);
       if(backend === 'cpu') {
         const f=functions.get(name);
         if(!f) return Promise.reject(Error(`unknown function ${name}`));

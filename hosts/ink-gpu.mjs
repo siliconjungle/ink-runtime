@@ -1,5 +1,5 @@
 import {createDevice} from "./ink-device.mjs";
-import {createSelector} from "./backend-selection.mjs";
+import {createSelector,profileScope} from "./backend-selection.mjs";
 // Compiled Wasm CPU fallback + literal WGSL stages. Profiles never grant facts
 // about future inputs. Calls are serialized; trials have no application effects.
 const now=()=>performance.now();
@@ -60,19 +60,19 @@ export async function loadInk(base,options={}){
   async function run(f,args,backend){
     if(closed)throw Error('Ink runtime is closed');
     if(backend==='javascript') return {value:javascriptFunctions.get(f.name)(...args),backend,reason:'explicit backend selection'};
-    await ensureCpu();
-    const candidates=[{name:'cpu',startupMs:cpuStartup,run:()=>cpu(f,args)}, {name:'javascript',startupMs:jsStartup,verify:(value,reference)=>value===reference,run:()=>javascriptFunctions.get(f.name)(...args)}];
+    const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>cpu(f,args)}, {name:'javascript',startupMs:jsStartup,verify:(value,reference)=>value===reference,run:()=>javascriptFunctions.get(f.name)(...args)}];
     if(f.gpu && !disabled.has(f.index) && options.gpu!==false) candidates.push({name:'gpu',async:true,verify:(value,reference)=>value===reference,prepare:()=>adapter.prepare(f,args),run:async()=>{
       try {return await adapter.run(f,args);}catch(error){if(!/limits|budget/.test(String(error)))disabled.set(f.index,String(error));throw error;}
     }});
-    const key=f.gpu?profileKey(f,args):JSON.stringify([f.index,args.map(v=>typeof v==='object'?v.length:String(v))]);
-    const outcome=await selector.run(key,candidates,backend);
+    const scope=profileScope(manifest,f.name),features={input_elements:args.reduce((n,v)=>n+(typeof v==='object'?v.length:0),0),input_bytes:args.reduce((n,v)=>n+(typeof v==='object'?v.byteLength:4),0),output_capacity_elements:1,dispatches:1,iterations:1};
+    const key=options.policy==='profile'?(f.gpu?profileKey(f,args):JSON.stringify([f.index,args.map(v=>typeof v==='object'?v.length:String(v))])):scope;
+    const outcome=await selector.run(key,candidates,backend,{scope,boundary:'captured-owned',features});
     return {value:outcome.result,backend:outcome.backend,reason:outcome.reason,profile:outcome.profile};
   }
   return {
     manifest,
     capture(name,args){const f=functions.get(name);if(!f)throw Error(`unknown function ${name}`);return argumentsFor(f,args);},
-    run(name,args,selection=backend){const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
+    run(name,args,selection=backend){if(selection==='auto'&&options.policy==='static')selection=options.staticBackend??'cpu';const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
       const pending=serial.then(()=>run(f,validated,selection));serial=pending.catch(()=>{});return pending;},
     async close(){await serial;closed=true;adapter.close();selector.clear();},
   };

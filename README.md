@@ -14,14 +14,20 @@ The Ink distribution pins this repository and tests integrated lowering/executio
 
 Browser bundles also include trusted `program.mjs` emission from the pinned
 `ink-lowering-js` package. Both scalar calls and packed pipelines accept explicit
-`javascript`, `cpu` (Wasm), `gpu` or `auto` selection. `backend-selection.mjs`
-compares eligible pure candidates with bounded, alternating measurements of
-whole execution, including conversions, transfers and result materialisation.
-Initial JavaScript/Wasm module setup is charged once and amortised over expected
-reuse; later profiles measure warm execution. GPU preparation remains explicit.
-Unavailable/failed candidates retain the compiled CPU baseline. Profiling caches
-hold at most 32 shapes and recheck after 32 uses by default. Profile receipts are
-observations, not proofs. Native wgpu bundles continue to use their C CPU path.
+`javascript`, `cpu` (Wasm), `gpu` or `auto` selection. `backend-selection.mjs` separates execution policy from language semantics.
+The default `policy:'adaptive'` uses an optional saved `costProfile` bound to a
+`targetKey`, exact emitted-code scope and a declared workload domain. It performs
+one chosen execution and no online trials. Without comparable CPU/alternative
+profile evidence it retains the compiled CPU baseline. `policy:'static'` fixes
+`staticBackend:'cpu'|'javascript'|'gpu'`; explicit backend requests override the
+policy. Static JS calls avoid packed transport and Wasm initialization.
+`policy:'profile'` explicitly enables the historical bounded alternating trials
+for pure training calls, including conversions, transfers and materialization.
+It is not used for stateful actions or explicit destination calls. Profile caches
+hold at most32 decisions; availability/device loss clears or changes decisions.
+Measurements never establish correctness, valid types, ranges or source equality.
+The profile is copied/bound once, and its component estimates are untrusted
+profitability data. Native wgpu bundles continue to use their C CPU path.
 Mixed modules expose complete Wasm state execution and explicit JavaScript state instances. Stateful actions never enter speculative selection. Per-stage adaptive JS/Wasm/GPU placement remains future work.
 
 The JavaScript value ABI trusts the caller, like native compiled code: arguments
@@ -103,3 +109,13 @@ CLI `emit-state` uses `COMPLETE_STATE_RUNNER` and `emit_native_state_host`; the
 specialised `STATE_RUNNER` remains available for direct state-emitter harnesses.
 
 Mixed native bundles dispatch eligible pure calls independently of durable transactions. GPU calls do not publish state or retry receipts; poisoned hosts reject dispatch until reopened. Both native runners share `hosts/native/state-cli.rs`.
+
+Packed compute bundles expose `await prepareGpuPipeline(plan)` for a fixed pure
+pipeline without feedback. It snapshots/uploads declared inputs once and retains
+GPU buffers and bindings. `run()` executes the active emitted legacy shader or
+required graph and returns fresh full owned readback values plus actual counters;
+`setup` records upload/live bytes separately, and subsequent `upload_bytes` is
+zero. Dynamic graph output lengths remain device headers, never capacities.
+`close()` releases storage; engine close/device loss invalidates sessions. Runs
+are serialized by the host. This is resident input with owned readback, not a
+GPU-only timing boundary or a mutable public device handle.

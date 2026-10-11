@@ -16,10 +16,10 @@ const specs=[
 ];
 const functions=specs.map(([name,params,result],index)=>({index,name,params:params.map(type=>({type})),result,shader:null}));
 
-async function fixture(run) {
+async function fixture(run,options={}) {
  const dir=await mkdtemp(join(tmpdir(),'ink-lean-runtime-'));
  for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
- await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){},prepare(){throw Error('GPU unavailable')},run(){throw Error('GPU unavailable')}});");
+ await writeFile(join(dir,'ink-device.mjs'),"export const createDevice=()=>({close(){},prepare(){throw Error('GPU unavailable')},run(){throw Error('GPU unavailable')},capture(p){const outputs=p.outputs.slice();return {setup:{upload_bytes:4},run(){return {values:Object.fromEntries(outputs.map(id=>[id,[7]])),counters:{upload_bytes:0}}},close(){}}}});");
  await writeFile(join(dir,'program.mjs'),`export const functions={
   increment:xs=>Array.from(xs,x=>(x+1)>>>0),negative:xs=>Array.from(xs,x=>x<0),count:xs=>BigInt(xs.length),
   wide:xs=>Array.from(xs,x=>BigInt.asUintN(64,x+1n)),identity:xs=>xs,
@@ -32,11 +32,12 @@ async function fixture(run) {
   cpuCalls++;const view=new DataView(memory.buffer),ptr=view.getUint32(ptrs,true),len=view.getUint32(lengths,true),xs=Array.from(new Uint32Array(memory.buffer,ptr,len));
   assert.equal(index,0,'mock CPU only handles increment');const words=xs.map(x=>(x+1)>>>0),out=exports.ink_alloc(words.length,4);new Uint32Array(memory.buffer,out,words.length).set(words);view.setUint32(hp,out,true);view.setUint32(hc,words.length,true);
  }};
- globalThis.fetch=async url=>String(url).endsWith('manifest.json')?{json:async()=>({schema:2,core_sha256:'fixture',functions})}:{arrayBuffer:async()=>new ArrayBuffer(0)};
+ const manifestFunctions=options.gpu?functions.map(f=>f.name==='increment'?{...f,shader:'mock.wgsl',lengths:[0]}:f):functions;
+ globalThis.fetch=async url=>String(url).endsWith('manifest.json')?{json:async()=>({schema:2,core_sha256:'fixture',functions:manifestFunctions})}:{arrayBuffer:async()=>new ArrayBuffer(0)};
  WebAssembly.instantiate=async()=>{wasmLoads++;return {instance:{exports}}};
  try {
   const {loadInk}=await import(pathToFileURL(join(dir,'ink-compute.mjs')));
-  const runtime=await loadInk(pathToFileURL(`${dir}/`),{gpu:false,backend:'javascript'});
+  const runtime=await loadInk(pathToFileURL(`${dir}/`),{gpu:false,backend:'javascript',...options});
   await run(runtime,()=>cpuCalls,()=>wasmLoads);
  }finally{globalThis.fetch=oldFetch;WebAssembly.instantiate=oldInstantiate;await rm(dir,{recursive:true,force:true});}
 }
@@ -69,7 +70,7 @@ test('JS pipeline composes native Bool/list/U64 values and feedback, matching li
  await assert.rejects(runtime.pipeline({steps:[{id:'bad',call:'count',args:[{step:'missing'}]}]}),/earlier step/);
 }));
 
-test('packed CPU remains available and auto profiling uses equivalent native JS results',async()=>fixture(async(runtime,cpuCalls)=>{
+test('packed CPU remains available and profile-free auto retains equivalent CPU results',async()=>fixture(async(runtime,cpuCalls)=>{
  const xs=[4294967295,7];
  assert.deepEqual((await runtime.call('increment',[xs],{backend:'cpu'})).value,[0,8]);
  const typed=new Uint32Array([4294967295,3]);
@@ -107,4 +108,29 @@ test('scalar host binds native JS and lazily retains its Wasm fallback',async()=
   assert.equal(wasmLoads,1);
   await runtime.close();await assert.rejects(runtime.run('advance',[1,2]),/closed/);
  }finally{globalThis.fetch=oldFetch;WebAssembly.instantiate=oldInstantiate;await rm(dir,{recursive:true,force:true});}
+});
+
+test('saved adaptive JS selection performs exactly one call and never loads Wasm',async()=>{
+ const scope=JSON.stringify(['fixture',null,null,'increment']);
+ const profile={schema:1,target_key:'test',models:{[scope]:{boundary:'captured-owned',domains:{input_elements:[0,100]},backends:{cpu:{intercept_ns:1000,terms:{}},javascript:{intercept_ns:10,terms:{}}}}}};
+ await fixture(async(runtime,cpuCalls,wasmLoads)=>{
+  for(let i=0;i<40;i++)assert.deepEqual((await runtime.call('increment',[new Uint32Array([4294967295,3])])).value,[0,4]);
+  assert.equal(cpuCalls(),0);assert.equal(wasmLoads(),0);
+ },{backend:'auto',policy:'adaptive',targetKey:'test',costProfile:profile});
+});
+test('static JS auto setting bypasses packed ingress and all profiling',async()=>{
+ await fixture(async(runtime,cpuCalls,wasmLoads)=>{
+  const xs=new Uint32Array([4294967295,3]);xs.slice=()=>{throw Error('static JS must not pack inputs')};
+  assert.deepEqual((await runtime.call('increment',[xs])).value,[0,4]);assert.equal(cpuCalls(),0);assert.equal(wasmLoads(),0);
+ },{backend:'auto',policy:'static',staticBackend:'javascript'});
+});
+
+test('prepared GPU output selection captures caller plan before queued preparation',async()=>{
+ await fixture(async runtime=>{
+  const outputs=['out'];const pending=runtime.prepareGpuPipeline({steps:[{id:'out',call:'increment',args:[[6]]}],outputs});
+  outputs[0]='changed';outputs.length=0;const prepared=await pending;
+  assert.deepEqual((await prepared.run()).value,[7]);
+  outputs.push('other');assert.deepEqual((await prepared.run()).values,{out:[7]});
+  await prepared.close();
+ },{gpu:true});
 });
