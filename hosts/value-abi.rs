@@ -342,6 +342,22 @@ impl InkContext {
             if weight>64*1024*1024-self.arena_bytes{return Err("temporary allocation limit exceeded".into())};self.arena_bytes+=weight;
             return Ok(V::Buffer(OwnedBuffer::new(vec![a[1].clone();n as usize])));
         }
+        if op=="buffer_split" {
+            let V::Buffer(b)=a[0].clone() else{return Err("buffer receiver".into())};
+            let V::U32(at)=a[1] else{return Err("buffer index".into())};
+            let (l,r)=b.split(at);return Ok(V::List(vec![V::Buffer(l),V::Buffer(r)]));
+        }
+        if op=="buffer_append" {
+            let (V::Buffer(left),V::Buffer(right))=(a[0].clone(),a[1].clone()) else{return Err("buffer append".into())};
+            if (left.len() as u64)+(right.len() as u64)>1000000{return Err("temporary allocation limit exceeded".into())};
+            return Ok(V::Buffer(left.append(right)));
+        }
+        if op=="list_drop"||op=="list_take" {
+            let V::List(mut xs)=std::mem::replace(&mut a[0],V::Unit) else{return Err("list slice".into())};
+            let V::U32(k)=a[1] else{return Err("list slice count".into())};let k=(k as usize).min(xs.len());
+            if op=="list_drop"{xs.drain(..k);}else{xs.truncate(k);}
+            return Ok(V::List(xs));
+        }
         if let Some(method)=op.strip_prefix("buffer_") {
             let V::Buffer(b)=a[0].clone() else{return Err("buffer receiver".into())};
             let index=|v:&V|->R<u32>{if let V::U32(x)=v{Ok(*x)}else{Err("buffer index".into())}};
