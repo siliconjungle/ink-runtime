@@ -85,10 +85,10 @@ impl Executor for Reference {
         let mut inputs=vec![p.physical.clone()];inputs.extend(args.iter().map(crate::definition_machine::Value::from_term).collect::<LangResult<Vec<_>>>()?);
         let a=c.plan().actions.get(action).ok_or("reference prepared action")?;
         let executed=p.machine.invoke_prepared(&a.execute,inputs)?;
-        let observed=p.machine.invoke_prepared(&a.observe,vec![executed.clone()])?.term()?;
+        let observed=p.machine.invoke_prepared(&a.observe,vec![executed.clone()])?.public_observation()?;
         let physical=p.machine.invoke_prepared(&a.next,vec![executed])?;
         // Private output is bounded before it can become the next call's input.
-        physical.term()?;
+        physical.check_limits()?;
         Ok((observed,Box::new(PreparedReference{machine:p.machine.clone(),physical})))
     }
 }
@@ -215,7 +215,10 @@ impl<E: Executor> Session<E> {
         if constructor == 1 {
             return Err("commit sequence exhausted".into());
         }
-        let [reply, Term::Bool(committed), Term::U64(version), state, events] =
+        if constructor != 0 {
+            return Err("action observation tag".into());
+        }
+        let [reply, Term::Bool(committed), Term::U64(version), _state, events] =
             arguments.as_slice()
         else {
             return Err("action observation shape".into());
@@ -229,8 +232,10 @@ impl<E: Executor> Session<E> {
             let reply=json!({"result":result,"committed":false,"version":version,"events":[]});stage("done");return Ok(reply);
         }
 
-        let tables = codec::tables(&self.checked, state)?;
-        let mut outbox = self.outbox.clone();
+        // All-action admission establishes logical post-state correspondence.
+        // Literal executors keep that state privately; reconstruct it only at
+        // checkpoint/restore or migration. Snapshot limits are checkpoint limits.
+        let mut pending = vec![];
         let mut published = vec![];
         if *committed {
             if Some(*version) != self.version.checked_add(1) {
@@ -244,26 +249,18 @@ impl<E: Executor> Session<E> {
                     value: value.clone(),
                 };
                 published.push(json!({"commit":*version,"position":position,"channel":self.checked.module().program().events.keys().nth(channel).unwrap(),"value":value}));
-                outbox.push(event);
+                pending.push(event);
             }
         } else if *version != self.version || !new_events.is_empty() {
             return Err("invalid aborted/query observation".into());
         }
         stage("validate");
-        snapshot_wire::encode(
-            &self.layout,
-            &Logical {
-                version: *version,
-                tables,
-                outbox: outbox.clone(),
-            },
-            Limits::default(),
-        )?;
+        self.outbox.try_reserve(pending.len()).map_err(|_| "outbox allocation failure")?;
         stage("publish");
         self.physical = next;
         self.prepared = prepared;
         self.version = *version;
-        self.outbox = outbox;
+        self.outbox.extend(pending);
         let result = json!({"result":result,"committed":committed,"version":version,"events":published});
         stage("done");
         Ok(result)

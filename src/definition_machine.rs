@@ -2,7 +2,34 @@
 use ink_core::{definition::CheckedDefinition,logic::{Declaration,Sort,Term},LangResult};
 use std::{collections::BTreeMap,sync::Arc};
 #[derive(Clone)]
-pub enum Value { Bool(bool), U64(u64), Data(String,usize,Arc<Vec<Value>>) }
+pub enum Value { Bool(bool), U64(u64), Data(String,usize,Arc<Fields>) }
+/// Immutable fields carry exact expanded transport size and depth. Sharing never
+/// changes the logical size: repeated references are counted at each occurrence.
+pub struct Fields { items: Vec<Value>, nodes: usize, depth: usize }
+impl std::ops::Deref for Fields { type Target=[Value]; fn deref(&self)->&[Value]{&self.items} }
+impl Value {
+ fn data(id:String,tag:usize,items:Vec<Value>)->Self {
+  let nodes=items.iter().fold(1usize,|n,v|n.saturating_add(v.measure().0));
+  let depth=items.iter().map(|v|v.measure().1.saturating_add(1)).max().unwrap_or(0);
+  Self::Data(id,tag,Arc::new(Fields{items,nodes,depth}))
+ }
+ fn measure(&self)->(usize,usize){match self{Self::Data(_,_,xs)=>(xs.nodes,xs.depth),_=>(1,0)}}
+ pub fn check_limits(&self)->LangResult<()>{let(n,d)=self.measure();if n>100000||d>8192{Err("machine output limit".into())}else{Ok(())}}
+ /// Present only the externally observed result, commit, version and events.
+ /// The checked logical-state slot stays private, never materialised as a Term.
+ pub fn public_observation(&self)->LangResult<Term>{
+  // Preserve the previous whole-observation resource bound using immutable
+  // cached measures, without reconstructing its private logical state.
+  self.check_limits()?;
+  let Self::Data(id,tag,xs)=self else{return Err("action observation carrier".into());};
+  let arguments=match (*tag,xs.len()) {
+   (0,5)=>vec![xs[0].term()?,xs[1].term()?,xs[2].term()?,Term::Bool(false),xs[4].term()?],
+   (1,3)=>vec![xs[0].term()?,xs[1].term()?,Term::Bool(false)],
+   _=>return Err("action observation shape".into())
+  };
+  Ok(Term::Construct{datatype:id.clone(),constructor:*tag,arguments})
+ }
+}
 pub struct Machine { declarations:BTreeMap<String,Declaration>,choices:BTreeMap<String,String>,exports:Vec<String>,pub identity:String }
 impl Value {
  pub fn from_term(t:&Term)->LangResult<Self>{
@@ -10,7 +37,7 @@ impl Value {
   let mut work=vec![Work::Read(t,0)];let mut values=Vec::new();let mut nodes=0;
   while let Some(w)=work.pop(){match w{
    Work::Read(t,depth)=>{nodes+=1;if nodes>100000||depth>8192{return Err("machine input limit".into());}match t{Term::Bool(x)=>values.push(Self::Bool(*x)),Term::U64(x)=>values.push(Self::U64(*x)),Term::Construct{datatype,constructor,arguments}=>{if arguments.len()>64{return Err("machine constructor limit".into());}work.push(Work::Build(datatype,*constructor,arguments.len()));work.extend(arguments.iter().rev().map(|x|Work::Read(x,depth+1)));},_=>return Err("machine non-ground input".into())}},
-   Work::Build(id,tag,n)=>{let xs=values.split_off(values.len()-n);values.push(Self::Data(id.into(),tag,Arc::new(xs)));}
+   Work::Build(id,tag,n)=>{let xs=values.split_off(values.len()-n);values.push(Self::data(id.into(),tag,xs));}
   }}values.pop().ok_or("machine empty value".into())
  }
  pub fn term(&self)->LangResult<Term>{
@@ -52,12 +79,37 @@ impl Machine {
    },
    Frame::If(a,b,env,current)=>{let Some(Value::Bool(test))=values.pop()else{return Err("machine condition".into());};frames.push(Frame::Eval(if test{a}else{b},env,current));},
    Frame::Match(branches,env,current)=>{let Some(Value::Data(_,tag,xs))=values.pop()else{return Err("machine match".into());};let branch=branches.get(tag).ok_or("machine constructor")?;if branch.bindings.len()!=xs.len(){return Err("machine bindings".into());}let mut local=(*env).clone();local.extend(branch.bindings.iter().cloned().zip(xs.iter().cloned()));frames.push(Frame::Eval(&branch.body,Arc::new(local),current));},
-   Frame::Construct(id,tag,n)=>{allocations+=1;if allocations>100000{return Err("machine allocation limit".into());}let xs=values.split_off(values.len().checked_sub(n).ok_or("machine stack")?);values.push(Value::Data(id.into(),tag,Arc::new(xs)));},
+   Frame::Construct(id,tag,n)=>{allocations+=1;if allocations>100000{return Err("machine allocation limit".into());}let xs=values.split_off(values.len().checked_sub(n).ok_or("machine stack")?);values.push(Value::data(id.into(),tag,xs));},
    Frame::Call(id,n)=>{let xs=values.split_off(values.len().checked_sub(n).ok_or("machine stack")?);let (params,body)=self.function(id)?;if xs.len()!=params.len(){return Err("machine call arity".into());}frames.push(Frame::Eval(body,Arc::new(params.iter().zip(xs).map(|((n,_),v)|(n.clone(),v)).collect()),id));},
    Frame::Binary(op)=>{let rhs=values.pop().ok_or("machine stack")?;let lhs=values.pop().ok_or("machine stack")?;let result=match(lhs,rhs){
     (Value::U64(a),Value::U64(b))if op.starts_with("f32:")=>match ink_core::logic::f32_primitive(op,a,b)?{Term::U64(x)=>Value::U64(x),Term::Bool(x)=>Value::Bool(x),_=>unreachable!()},
     (Value::U64(a),Value::U64(b))=>match op{"+"=>Value::U64(a.wrapping_add(b)),"-"=>Value::U64(a.wrapping_sub(b)),"*"=>Value::U64(a.wrapping_mul(b)),"&"=>Value::U64(a&b),"quot"=>Value::U64(a.checked_div(b).unwrap_or(0)),"rem"=>Value::U64(a.checked_rem(b).unwrap_or(0)),"=="=>Value::Bool(a==b),"!="=>Value::Bool(a!=b),"<"=>Value::Bool(a<b),"<="=>Value::Bool(a<=b),">"=>Value::Bool(a>b),">="=>Value::Bool(a>=b),_=>return Err("machine word operator".into())},
     (Value::Bool(a),Value::Bool(b))=>match op{"&&"=>Value::Bool(a&&b),"||"=>Value::Bool(a||b),"=="=>Value::Bool(a==b),"!="=>Value::Bool(a!=b),_=>return Err("machine Bool operator".into())},_=>return Err("machine operand sort".into())};values.push(result);},
   }}if values.len()!=1{return Err("machine result stack".into());}values.pop().ok_or("machine empty result".into())
+ }
+}
+
+#[cfg(test)]
+mod measure_tests {
+ use super::*;
+ #[test] fn shared_fields_count_every_logical_occurrence(){
+  let leaf=Value::data("leaf".into(),0,vec![Value::U64(9)]);
+  let pair=Value::data("pair".into(),0,vec![leaf.clone(),leaf]);
+  assert_eq!(pair.measure(),(5,2));
+  let mut large=Value::U64(0);
+  for _ in 0..17{large=Value::data("pair".into(),0,vec![large.clone(),large]);}
+  assert!(large.check_limits().is_err());
+ }
+ #[test] fn public_projection_does_not_transport_private_state(){
+  let mut state=Value::U64(0);
+  for _ in 0..17{state=Value::data("pair".into(),0,vec![state.clone(),state]);}
+  assert!(state.term().is_err());
+  let oversized=Value::data("observation".into(),0,vec![Value::U64(7),Value::Bool(true),Value::U64(2),state,Value::data("events".into(),0,vec![])]);
+  assert!(oversized.public_observation().is_err());
+  let mut state=Value::U64(0);
+  for _ in 0..15{state=Value::data("pair".into(),0,vec![state.clone(),state]);}
+  let observed=Value::data("observation".into(),0,vec![Value::U64(7),Value::Bool(true),Value::U64(2),state,Value::data("events".into(),0,vec![])]);
+  let Term::Construct{arguments,..}=observed.public_observation().unwrap()else{panic!()};
+  assert_eq!(arguments[0],Term::U64(7));assert_eq!(arguments[3],Term::Bool(false));
  }
 }

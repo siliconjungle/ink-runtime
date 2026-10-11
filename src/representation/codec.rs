@@ -54,6 +54,13 @@ fn encode_value(
             if bits==0 {construct(integer,0,vec![])}else{construct(integer,if x.sign()==num_bigint::Sign::Minus{2}else{1},vec![tail])}
         },
         (Type::Bool, Value::Bool(x)) => Term::Bool(*x),
+        (Type::String, Value::String(text)) => {
+            if text.len()>4096{return Err("representation string limit".into());}
+            let id=type_id(c,t)?;let mut tail=construct(id,0,vec![]);
+            for byte in text.bytes().rev(){tail=construct(id,1,vec![Term::U64(byte as u64),tail]);}tail
+        },
+        (Type::Named(n), Value::Id(actual,x)) if p.ids.contains(n)&&n==actual =>
+            construct(type_id(c,t)?,0,vec![Term::U64((x>>64)as u64),Term::U64(*x as u64)]),
         (Type::Vector(element,n),Value::Vector(xs))=>{if xs.len()!=*n as usize{return Err("vector length".into());}construct(type_id(c,t)?,0,xs.iter().map(|x|inner(element,x)).collect::<LangResult<Vec<_>>>()?)},
         (Type::List(t0), Value::List(xs)) => {
             if xs.len() > 4096 {
@@ -122,6 +129,15 @@ pub fn decode(c: &CheckedRepresentation, t: &Type, value: &Term) -> LangResult<J
         let (tag, args) = data(value, type_id(c, t)?)?;
         let inner = |t, v| go(c, t, v, d + 1);
         Ok(match t {
+            Type::String => {
+                let id=type_id(c,t)?;let mut cursor=value;let mut bytes=vec![];
+                loop{let(tag,args)=data(cursor,id)?;match(tag,args){(0,[])=>break,(1,[Term::U64(byte),tail])if *byte<=255&&bytes.len()<4096=>{bytes.push(*byte as u8);cursor=tail;},_=>return Err("string carrier/limit".into())}}
+                Json::String(String::from_utf8(bytes).map_err(|_|"invalid UTF-8 string")?)
+            },
+            Type::Named(n) if p.ids.contains(n)&&tag==0 => {
+                let [Term::U64(high),Term::U64(low)]=args else{return Err("ID carrier".into());};
+                Json::String(format!("{:032x}",((*high as u128)<<64)|*low as u128))
+            },
             Type::Int => {
                 if tag==0 && args.is_empty(){return Ok(serde_json::json!({"Int":"0"}));}
                 if !(1..=2).contains(&tag)||args.len()!=1{return Err("integer carrier".into());}
@@ -195,14 +211,14 @@ pub fn from_tables(c: &CheckedRepresentation, tables: &[Vec<(Json, Json)>]) -> L
         if rows.len() > 4096 {
             return Err("representation table execution limit".into());
         }
-        let Type::Table(_, t) = &root.ty else {
+        let Type::Table(k, t) = &root.ty else {
             return Err("table root required".into());
         };
         let mut list = construct(&model.datatype, 0, vec![]);
         let mut prior = None;
         for (key, row) in rows {
-            let key = key.as_u64().ok_or("u64 table key required")?;
-            if prior.is_some_and(|x| x >= key) {
+            let key = Value::from_json(key,k,p)?;
+            if prior.as_ref().is_some_and(|x| x >= &key) {
                 return Err("source keys must be unique and ordered".into());
             }
             prior = Some(key);
@@ -212,7 +228,7 @@ pub fn from_tables(c: &CheckedRepresentation, tables: &[Vec<(Json, Json)>]) -> L
             list = construct(
                 &model.datatype,
                 1,
-                vec![Term::U64(key.as_u64().unwrap()), encode(c, t, row)?, list],
+                vec![encode(c,k,key)?, encode(c, t, row)?, list],
             );
         }
         out.push(list);
@@ -233,7 +249,7 @@ pub fn tables(c: &CheckedRepresentation, state: &Term) -> LangResult<Vec<Vec<(Js
         .zip(&c.projection().tables)
         .zip(roots)
     {
-        let Type::Table(_, t) = &root.ty else {
+        let Type::Table(k, t) = &root.ty else {
             return Err("table root required".into());
         };
         let mut out = vec![];
@@ -245,14 +261,16 @@ pub fn tables(c: &CheckedRepresentation, state: &Term) -> LangResult<Vec<Vec<(Js
             let (tag, args) = data(rows, &model.datatype)?;
             match (tag, args) {
                 (0, []) => break,
-                (1, [Term::U64(key), value, tail]) => {
-                    if prior.is_some_and(|x| x >= *key) {
+                (1, [key, value, tail]) => {
+                    let key_json=decode(c,k,key)?;
+                    let key_value=Value::from_json(&key_json,k,c.module().program())?;
+                    if prior.as_ref().is_some_and(|x| x >= &key_value) {
                         return Err(
                             "representation produced unordered/duplicate source keys".into()
                         );
                     }
-                    prior = Some(*key);
-                    out.push(((*key).into(), decode(c, t, value)?));
+                    prior = Some(key_value);
+                    out.push((key_json, decode(c, t, value)?));
                     rows = tail;
                 }
                 _ => return Err("source rows shape mismatch".into()),
