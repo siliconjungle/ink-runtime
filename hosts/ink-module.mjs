@@ -14,6 +14,6 @@ export async function loadInk(base,{gpu=true,backend='auto',...options}={}){
    if(chosen==='javascript')return {value:js.call(name,args),backend:'javascript',reason:'explicit backend selection'};
    if(f.gpu&&chosen!=='cpu'){try{const host=await part(f);return await(host.call?host.call(name,args,{backend:chosen,...callOptions}):host.run(name,args,chosen));}catch(e){return {value:pure.pure(name,args),backend:'cpu',reason:`GPU fallback: ${e.message}`};}}
    return {value:pure.pure(name,args),backend:'cpu',reason:f.fallback_reason??'explicit backend selection'};
-  },dispose(){pure.dispose();for(const pending of parts.values())pending.then(p=>p.dispose?.()).catch(()=>{});parts.clear();}
+  },dispose(){pure.dispose();const pending=[...parts.values()].map(p=>p.then(host=>host.dispose?host.dispose():host.close?.()).catch(()=>{}));parts.clear();return Promise.all(pending);}
  };
 }
