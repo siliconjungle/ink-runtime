@@ -207,8 +207,9 @@ function compilePlan(plan, functions, native = false) {
   )
     fail("invalid pipeline outputs");
   const feedback = new Map();
-  if(Object.keys(plan.feedback ?? {}).length && steps.some(s=>s.f.graph_required))
-    reason ??= "GPU stage graph feedback is unsupported";
+  const graphExecution=steps.some(s=>s.f.graph_required);
+  if(graphExecution && steps.some(s=>!s.f.graph))
+    reason ??= "mixed GPU graph requires a graph descriptor for every function";
   for (const [input, id] of Object.entries(plan.feedback ?? {})) {
     if (!inputs.has(input) || !ids.has(id))
       fail("unknown feedback input or step");
@@ -245,6 +246,10 @@ function compilePlan(plan, functions, native = false) {
       ),
     0,
   );
+  if(graphExecution) for(const name of feedback.keys()) {
+    const c=constants[inputs.get(name).index];
+    bytes+=Math.max(4,c.count*width(c.type)*4+(c.type.kind==='list'?4:0));
+  }
   if (bytes > MAX_BYTES) reason ??= "GPU live-buffer budget exceeds 256 MiB";
   return {
     constants,
@@ -406,6 +411,7 @@ export async function loadInk(
     if(backend === 'javascript') return {...runJavascript(p),backend,reason:'explicit backend selection'};
     await ensureCpu();
     if(backend === 'cpu') return {...runCpu(p),backend,reason:'explicit backend selection'};
+    if(backend === 'gpu' && p.reason) return {...runCpu(p),backend:'cpu',reason:p.reason};
     const key=JSON.stringify([manifest.core_sha256,p.steps.map(s=>[s.f.index,s.args.map(a=>[a.kind,a.index,a.count])]),p.iterations,[...p.feedback],p.outputs,p.constants.map(c=>[c.type,c.count,Array.from(c.words.subarray(0,8))])]);
     const candidates=[{name:'cpu',startupMs:cpuStartup,run:()=>runCpu(p)},{name:'javascript',startupMs:jsStartup,run:()=>runJavascript(p)}];
     if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:()=>adapter.prepare(p),run:()=>adapter.run(p)});

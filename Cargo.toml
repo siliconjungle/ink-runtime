@@ -5,9 +5,9 @@ edition = "2021"
 publish = false
 [dependencies]
 ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "b7a2e286307cf72e84015b32944bd46ab8b0b508" }
-ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "549a2cd57ea960acb63982467a4a4f4123c5144c" }
-ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "f769b3b0ebc360a6e4118994f10054b33cd97528" }
-ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "4af3b27e77ac5669c1a4fcc5858b0b7e9389ccb6" }
+ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "f42ec7794ea9ea53a7a6499f972fa0fc7b9c831d" }
+ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "5f423a67cb2ea5414c380a24e8eaab4e6d20b4da" }
+ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "78b4418f3847561bfadad1f79d317b0ff2d58f38" }
 ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "ad645cf5bfdb2392571af13ff64c84bdc734bb78" }
 serde_json = { version="1", features=["float_roundtrip"] }
 sha2 = "0.10"
