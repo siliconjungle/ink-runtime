@@ -121,7 +121,7 @@ fn symbols(source: &str, prefix: &str) -> String {
     out
 }
 fn gpu_entry_eligible(entry: &serde_json::Value) -> bool {
-    entry["shader"].is_string() || entry["graph"].is_object()
+    entry["shader"].is_string() || entry["graph"].is_object() || entry["gpu"].is_object()
 }
 
 pub fn emit(module: &CheckedModule, dir: &Path) -> LangResult<()> {
@@ -240,6 +240,7 @@ mod tests {
         assert!(gpu_entry_eligible(&json!({"shader":null,"graph_required":true,"graph":{"nodes":[{"shader":"fold.wgsl"}]}})));
         assert!(gpu_entry_eligible(&json!({"shader":"map.wgsl","graph":null})));
         assert!(!gpu_entry_eligible(&json!({"shader":null,"graph":null,"fallback_reason":"unsupported carrier"})));
-        assert!(!gpu_entry_eligible(&json!({"shader":null,"gpu":{"unrelated":true}})));
+        assert!(gpu_entry_eligible(&json!({"gpu":{"aggregate":"sum","list_param":0,"stages":[]}})));
+        assert!(!gpu_entry_eligible(&json!({})));
     }
 }

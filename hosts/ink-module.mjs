@@ -12,7 +12,7 @@ export async function loadInk(base,{gpu=true,backend='auto',...options}={}){
    if(!['auto','gpu','cpu','javascript'].includes(chosen))throw Error('invalid backend');
    const f=manifest.functions.find(f=>f.name===name);if(!f)throw Error(`unknown Ink function ${name}`);
    if(chosen==='javascript')return {value:js.call(name,args),backend:'javascript',reason:'explicit backend selection'};
-   if(f.gpu&&chosen!=='cpu'){try{return await(await part(f)).call(name,args,{backend:chosen,...callOptions});}catch(e){return {value:pure.pure(name,args),backend:'cpu',reason:`GPU fallback: ${e.message}`};}}
+   if(f.gpu&&chosen!=='cpu'){try{const host=await part(f);return await(host.call?host.call(name,args,{backend:chosen,...callOptions}):host.run(name,args,chosen));}catch(e){return {value:pure.pure(name,args),backend:'cpu',reason:`GPU fallback: ${e.message}`};}}
    return {value:pure.pure(name,args),backend:'cpu',reason:f.fallback_reason??'explicit backend selection'};
   },dispose(){pure.dispose();for(const pending of parts.values())pending.then(p=>p.dispose?.()).catch(()=>{});parts.clear();}
  };
