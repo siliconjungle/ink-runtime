@@ -173,7 +173,9 @@ fn emit_checked(
                     .iter()
                     .find(|e| e["name"] == f.name)
                     .unwrap();
-                let eligible = entry["shader"].is_string() || entry["gpu"].is_object();
+                let eligible = entry["shader"].is_string()
+                    || entry["gpu"].is_object()
+                    || entry["graph"].is_object();
                 if eligible {
                     let prefix = format!("ink_part{i}_");
                     let cpath = dir.join(&folder).join("native/cpu.c");

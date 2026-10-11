@@ -9,6 +9,8 @@ use ink_core::{
 };
 use serde_json::{json, Value};
 mod codec;
+pub mod compiled;
+pub mod javascript;
 /// Implementations of literal target execution are disclosed trusted backends.
 /// They must execute the exact sealed definition, never select new algorithms.
 pub trait Executor {

@@ -43,3 +43,11 @@ test('charges module startup once and rechecks warm costs rather than repeatedly
   const second=await selector.run('second',candidates);assert.equal(second.backend,'javascript');
   assert.equal(second.profile.setup_ms.javascript,0);
 });
+
+test('required GPU execution never invokes a CPU fallback',async()=>{
+ const selector=createSelector();let calls=0;const cpu={name:'cpu',run:()=>{calls++;return 7;}};
+ await assert.rejects(selector.run('missing',[cpu],'gpu-required'),/unavailable/);
+ await assert.rejects(selector.run('lost',[cpu,{name:'gpu',run:()=>{throw Error('device lost');}}],'gpu-required'),/device lost/);
+ assert.equal(calls,0);
+ assert.equal((await selector.run('working',[cpu,{name:'gpu',run:()=>7}],'gpu-required')).backend,'gpu');
+});
