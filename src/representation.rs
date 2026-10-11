@@ -12,6 +12,31 @@ mod codec;
 /// Implementations of literal target execution are disclosed trusted backends.
 /// They must execute the exact sealed definition, never select new algorithms.
 pub trait Executor {
+    /// Optional immutable target state. The runtime publishes it only after
+    /// observation and transport validation, exactly like the ground fallback.
+    fn prepare(
+        &self,
+        _checked: &CheckedRepresentation,
+        _physical: &Term,
+    ) -> LangResult<Option<Box<dyn std::any::Any>>> {
+        Ok(None)
+    }
+    fn materialise(
+        &self,
+        _checked: &CheckedRepresentation,
+        _state: &dyn std::any::Any,
+    ) -> LangResult<Term> {
+        Err("executor has no prepared state codec".into())
+    }
+    fn transition_prepared(
+        &self,
+        _checked: &CheckedRepresentation,
+        _action: &str,
+        _state: &dyn std::any::Any,
+        _args: Vec<Term>,
+    ) -> LangResult<(Term, Box<dyn std::any::Any>)> {
+        Err("executor has no prepared transition".into())
+    }
     fn execute(
         &self,
         definition: &CheckedDefinition,
@@ -80,6 +105,7 @@ pub struct Session<E: Executor> {
     // representation changes. Avoid rebuilding/hashing them on every call.
     layout: snapshot_wire::Layout,
     physical: Term,
+    prepared: Option<Box<dyn std::any::Any>>,
     version: u64,
     outbox: Vec<snapshot_wire::Event>,
     executor: E,
@@ -103,10 +129,16 @@ impl<E: Executor> Session<E> {
             &checked.plan().encode,
             vec![input],
         )?;
+        let prepared = executor.prepare(&checked, &physical)?;
         Ok(Self {
             checked,
             layout,
-            physical,
+            physical: if prepared.is_some() {
+                Term::Bool(false)
+            } else {
+                physical
+            },
+            prepared,
             version: logical.version,
             outbox: logical.outbox,
             executor,
@@ -122,8 +154,14 @@ impl<E: Executor> Session<E> {
     pub fn version(&self) -> u64 {
         self.version
     }
+    fn physical_value(&self) -> LangResult<Term> {
+        match &self.prepared {
+            Some(state) => self.executor.materialise(&self.checked, state.as_ref()),
+            None => Ok(self.physical.clone()),
+        }
+    }
     pub fn checkpoint(&self) -> LangResult<Vec<u8>> {
-        let state = self.run(&self.checked.plan().decode, vec![self.physical.clone()])?;
+        let state = self.run(&self.checked.plan().decode, vec![self.physical_value()?])?;
         let logical = Logical {
             version: self.version,
             tables: codec::tables(&self.checked, &state)?,
@@ -136,6 +174,17 @@ impl<E: Executor> Session<E> {
             .retain(|e| (e.commit, e.position) > (commit, position));
     }
     pub fn invoke_json(&mut self, name: &str, args: &Value) -> LangResult<Value> {
+        self.invoke_json_profiled(name, args, |_| {})
+    }
+    /// Calls the observer immediately before each complete stage and at `done`.
+    /// Ordinary execution supplies an inlined no-op and reads no clock.
+    pub fn invoke_json_profiled(
+        &mut self,
+        name: &str,
+        args: &Value,
+        mut stage: impl FnMut(&'static str),
+    ) -> LangResult<Value> {
+        stage("inputs");
         let source = self
             .checked
             .module()
@@ -148,13 +197,27 @@ impl<E: Executor> Session<E> {
         if xs.len() != source.params.len() {
             return Err("action argument count mismatch".into());
         }
-        let mut inputs = vec![self.physical.clone(), Term::U64(self.version)];
+        let mut inputs = if self.prepared.is_some() {
+            vec![Term::U64(self.version)]
+        } else {
+            vec![self.physical.clone(), Term::U64(self.version)]
+        };
         for ((_, t), value) in source.params.iter().zip(xs) {
             inputs.push(codec::encode(&self.checked, t, value)?);
         }
         // Evaluate the proposal once. No authoritative mutation occurs until
         // all execution/decoding/transport checks have succeeded.
-        let (observed, next) = self.executor.transition(&self.checked, name, inputs)?;
+        stage("execute");
+        let (observed, next, prepared) = if let Some(state) = &self.prepared {
+            let (observed, next) =
+                self.executor
+                    .transition_prepared(&self.checked, name, state.as_ref(), inputs)?;
+            (observed, Term::Bool(false), Some(next))
+        } else {
+            let (observed, next) = self.executor.transition(&self.checked, name, inputs)?;
+            (observed, next, None)
+        };
+        stage("decode");
         let Term::Construct {
             datatype,
             constructor,
@@ -180,6 +243,7 @@ impl<E: Executor> Session<E> {
         };
         let result = codec::decode(&self.checked, &source.result, reply)?;
         let new_events = codec::events(&self.checked, events)?;
+
         let tables = codec::tables(&self.checked, state)?;
         let mut outbox = self.outbox.clone();
         let mut published = vec![];
@@ -200,6 +264,7 @@ impl<E: Executor> Session<E> {
         } else if *version != self.version || !new_events.is_empty() {
             return Err("invalid aborted/query observation".into());
         }
+        stage("validate");
         snapshot_wire::encode(
             &self.layout,
             &Logical {
@@ -209,10 +274,15 @@ impl<E: Executor> Session<E> {
             },
             Limits::default(),
         )?;
+        stage("publish");
         self.physical = next;
+        self.prepared = prepared;
         self.version = *version;
         self.outbox = outbox;
-        Ok(json!({"result":result,"committed":committed,"version":version,"events":published}))
+        let result =
+            json!({"result":result,"committed":committed,"version":version,"events":published});
+        stage("done");
+        Ok(result)
     }
     /// Generic migration reconstructs the same logical snapshot. Target encode
     /// establishes its invariant for every logical input; no profile is a premise.
@@ -220,7 +290,7 @@ impl<E: Executor> Session<E> {
         if self.checked.module().identity()? != to.module().identity()? {
             return Err("migration changes source program".into());
         }
-        let logical = self.run(&self.checked.plan().decode, vec![self.physical.clone()])?;
+        let logical = self.run(&self.checked.plan().decode, vec![self.physical_value()?])?;
         let next = self.executor.execute(
             to.definition(),
             to.context(),
@@ -239,7 +309,13 @@ impl<E: Executor> Session<E> {
         if decoded != logical {
             return Err("migration executor changed logical state".into());
         }
-        self.physical = next;
+        let prepared = self.executor.prepare(&to, &next)?;
+        self.physical = if prepared.is_some() {
+            Term::Bool(false)
+        } else {
+            next
+        };
+        self.prepared = prepared;
         self.checked = to;
         Ok(())
     }
@@ -255,12 +331,12 @@ impl<E: Executor> Session<E> {
         {
             return Err("direct migration endpoint mismatch".into());
         }
-        let logical = self.run(&self.checked.plan().decode, vec![self.physical.clone()])?;
+        let logical = self.run(&self.checked.plan().decode, vec![self.physical_value()?])?;
         let next = self.executor.execute(
             migration.definition(),
             migration.context(),
             migration.function(),
-            vec![self.physical.clone()],
+            vec![self.physical_value()?],
         )?;
         let decoded = self.executor.execute(
             to.definition(),
@@ -272,7 +348,13 @@ impl<E: Executor> Session<E> {
         if decoded != logical {
             return Err("migration executor changed logical state".into());
         }
-        self.physical = next;
+        let prepared = self.executor.prepare(&to, &next)?;
+        self.physical = if prepared.is_some() {
+            Term::Bool(false)
+        } else {
+            next
+        };
+        self.prepared = prepared;
         self.checked = to;
         Ok(())
     }
