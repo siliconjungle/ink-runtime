@@ -218,6 +218,7 @@ impl Engine {
     }
     fn call_prepared(&mut self, f: &Value, args: &[Arg], backend: Backend) -> Result<Value> {
         let output = |value:u64,backend:&str,reason:String,profile:Option<&Value>|json!({"value":if f["result"]=="bool"{json!(value!=0)}else{json!(value)},"backend":backend,"reason":reason,"profile":profile});
+        if backend==Backend::GpuRequired && f["gpu"].is_null(){return Err(f["cpu_reason"].as_str().unwrap_or("CPU-only function").into());}
         if backend == Backend::Cpu || f["gpu"].is_null() {
             return Ok(output(
                 cpu(&f, &args),
@@ -240,8 +241,8 @@ impl Engine {
         if backend==Backend::Auto&&decision["backend"]=="cpu"{return Ok(output(cpu(f,args),"cpu",decision["reason"].as_str().unwrap().into(),Some(&decision)));}
         let selected=(||{self.prepare(f,args)?;self.gpu.as_mut().unwrap().execute(f,args)})();
         match selected{
-            Ok(value)=>Ok(output(value,"gpu",if backend==Backend::Gpu{"explicit GPU selection".into()}else{decision["reason"].as_str().unwrap().into()},Some(&decision))),
-            Err(e)=>{if !e.contains("limits")&&!e.contains("budget"){self.disabled.insert(f["index"].as_u64().unwrap(),e.clone());}Ok(output(cpu(f,args),"cpu",format!("GPU fallback: {e}"),None))}
+            Ok(value)=>Ok(output(value,"gpu",if matches!(backend,Backend::Gpu|Backend::GpuRequired){"explicit GPU selection".into()}else{decision["reason"].as_str().unwrap().into()},Some(&decision))),
+            Err(e)=>{if backend==Backend::GpuRequired{return Err(e);}if !e.contains("limits")&&!e.contains("budget"){self.disabled.insert(f["index"].as_u64().unwrap(),e.clone());}Ok(output(cpu(f,args),"cpu",format!("GPU fallback: {e}"),None))}
         }
 
     }

@@ -329,4 +329,9 @@ pub mod representation;
 
 fn put_bytes(dir: &Path, name: &str, bytes: &[u8]) -> LangResult<()> {
     fs::write(dir.join(name), bytes).map_err(|e| e.to_string())
-}
+}pub mod definition_ffi;
+pub mod definition_process;
+pub mod definition_machine;
+
+/// Plain handle/buffer ABI appended to standalone representation applications.
+pub const REPRESENTATION_ABI_SOURCE: &str = ink_native_support::REPRESENTATION_EXPORTS_RUST_SOURCE;

@@ -16,7 +16,7 @@ function argumentsFor(f,args){
   });
 }
 export async function loadInk(base,options={}){
-  const backend=options.backend??'auto';if(!['auto','cpu','javascript','gpu'].includes(backend))throw Error('backend must be auto, cpu, javascript or gpu');
+  const backend=options.backend??'auto';if(!['auto','cpu','javascript','gpu','gpu-required'].includes(backend))throw Error('backend must be auto, cpu, javascript or gpu');
   const baseURL=new URL(base,globalThis.location?.href??'http://localhost/');
   async function asset(name){const response=await fetch(new URL(name,baseURL));if(!response.ok)throw Error(`cannot load ${name}: ${response.status}`);return response;}
   const manifest=await (await asset('manifest.json')).json();
@@ -65,7 +65,7 @@ export async function loadInk(base,options={}){
   return {
     manifest,
     capture(name,args){const f=functions.get(name);if(!f)throw Error(`unknown function ${name}`);return argumentsFor(f,args);},
-    run(name,args,selection=backend){const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
+    run(name,args,selection=backend){const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu','gpu-required'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
       const pending=serial.then(()=>run(f,validated,selection));serial=pending.catch(()=>{});return pending;},
     async close(){await serial;closed=true;adapter.close();selector.clear();},
   };

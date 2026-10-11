@@ -122,8 +122,7 @@ function compilePlan(plan, functions, native = false) {
       reason ??= "feedback changes array shape; compiled CPU pipeline";
     feedback.set(input, ids.get(id));
   }
-  if (constants.some((c) => !c.finite))
-    reason ??= "non-finite f32 inputs require CPU";
+
   let bytes = native ? 0 : constants.reduce(
     (n, c) => n + Math.max(4, c.words.byteLength+(c.type.kind==="list"?4:0)),
     0,
@@ -191,7 +190,7 @@ export async function loadInk(
   const jsStart=performance.now();
   const javascript=await import(new URL("program.mjs",root));
   const jsStartup=performance.now()-jsStart;
-  const functions=new Map(manifest.functions.map(f=>[f.name,{...f,javascript:javascript.functions[f.name],output:compileJavascriptOutput(f.result)}]));
+  const functions=new Map(manifest.functions.map(f=>[f.name,{...f,parallel:javascript.metadata.functions.find(m=>m.name===f.name)?.parallel??false,javascript:javascript.functions[f.name],output:compileJavascriptOutput(f.result)}]));
   const adapter=createDevice({root, enabled:gpu, onLost:()=>selector.clear(),fail,width,unpack,MAX_BYTES});
   function cpuCall(f, args, consume) {
     cpu.ink_compute_reset();
@@ -295,7 +294,7 @@ export async function loadInk(
     if(type.kind === 'list' && type.element.kind === 'u32') return words;
     return unpack(words,type,true);
   }
-  function runJavascript(p) {
+  async function runJavascript(p) {
     const inputs=new Map(p.inputs),values=[];
     const constants=p.constants.map(c=>Object.hasOwn(c,'javascript') ? c.javascript : (c.javascript=javascriptInput(c.words,c.type)));
     const resolve=a=>a.kind==='constant'?constants[a.index]:a.kind==='value'?a.value:values[a.index];
@@ -303,7 +302,7 @@ export async function loadInk(
       for(let i=0;i<p.steps.length;i++) {
         const s=p.steps[i];
         const args=s.args.map(a=>a.input?resolve(inputs.get(a.input)):resolve(a));
-        values[i]=s.f.javascript(...args);
+        values[i]=s.f.parallel ? await javascript.callAsync(s.f.name,args) : s.f.javascript(...args);
       }
       for(const [input,stage] of p.feedback)inputs.set(input,{kind:'value',value:values[stage]});
     }
@@ -316,7 +315,8 @@ export async function loadInk(
   }
   async function execute(p, { backend = defaultBackend } = {}) {
     if(closed) fail('Ink runtime is closed');
-    if(backend === 'javascript') return {...runJavascript(p),backend,reason:'explicit backend selection'};
+    if(backend === 'javascript') return {...await runJavascript(p),backend,reason:'explicit backend selection'};
+    if(backend === 'gpu-required' && p.reason)fail(p.reason);
     if(backend === 'cpu'){await ensureCpu();return {...runCpu(p),backend,reason:'explicit backend selection'};}
     if(backend === 'gpu' && p.reason){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:p.reason};}
     const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
@@ -324,7 +324,7 @@ export async function loadInk(
     const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:graphMode?s.f.graph.nodes.length:(s.count?1:0)})),iterations:p.iterations});
     const key=scope;
 
-    const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',startupMs:jsStartup,run:()=>runJavascript(p)}];
+    const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
     if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:()=>adapter.prepare(p),run:()=>adapter.run(p)});
     const outcome=await selector.run(key,candidates,backend,{scope,boundary:'captured-owned',features});
     return {...outcome.result,backend:outcome.backend,reason:outcome.reason,profile:outcome.profile};
@@ -351,9 +351,9 @@ export async function loadInk(
     callInto: (name, args, destination, {backend = 'javascript'} = {}) => {
       const f=functions.get(name);
       if(!f) return Promise.reject(Error(`unknown function ${name}`));
-      if(backend === 'javascript') return serial(()=>{
+      if(backend === 'javascript') return serial(async()=>{
         if(closed) fail('Ink runtime is closed');
-        const count=javascript.functionsInto[name](...args,destination);
+        let count;if(f.parallel){const value=await javascript.callAsync(name,args);if(value.length>destination.length)fail("destination capacity");for(let i=0;i<value.length;i++)destination[i]=value[i];count=value.length;}else count=javascript.functionsInto[name](...args,destination);
         return {count,backend,countUnit:'elements'};
       });
       if(backend !== 'cpu') return Promise.reject(Error('destination calls support javascript or cpu'));

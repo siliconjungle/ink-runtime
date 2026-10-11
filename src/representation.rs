@@ -9,6 +9,8 @@ use ink_core::{
 };
 use serde_json::{json, Value};
 mod codec;
+pub mod compiled;
+pub mod javascript;
 /// Implementations of literal target execution are disclosed trusted backends.
 /// They must execute the exact sealed definition, never select new algorithms.
 pub trait Executor {
@@ -79,24 +81,34 @@ pub trait Executor {
     }
 }
 pub struct Reference;
+struct PreparedReference { machine: std::sync::Arc<crate::definition_machine::Machine>, physical: crate::definition_machine::Value }
 impl Executor for Reference {
-    fn execute(
-        &self,
-        definition: &CheckedDefinition,
-        context: &Context,
-        function: &str,
-        args: Vec<Term>,
-    ) -> LangResult<Term> {
-        if !definition.exports().iter().any(|x| x == function) {
-            return Err("unexported representation function".into());
-        }
-        context.evaluate(
-            &[],
-            &Term::Call {
-                function: function.into(),
-                arguments: args,
-            },
-        )
+    fn execute(&self,d:&CheckedDefinition,_context:&Context,function:&str,args:Vec<Term>)->LangResult<Term>{
+        let machine=crate::definition_machine::Machine::new(d)?;
+        let inputs=args.iter().map(crate::definition_machine::Value::from_term).collect::<LangResult<Vec<_>>>()?;
+        machine.invoke(function,inputs)?.term()
+    }
+    fn prepare(&self,c:&CheckedRepresentation,p:&Term)->LangResult<Option<Box<dyn std::any::Any>>>{
+        let machine=std::sync::Arc::new(crate::definition_machine::Machine::new(c.definition())?);
+        Ok(Some(Box::new(PreparedReference{machine,physical:crate::definition_machine::Value::from_term(p)?})))
+    }
+    fn materialise(&self,c:&CheckedRepresentation,p:&dyn std::any::Any)->LangResult<Term>{
+        let p=p.downcast_ref::<PreparedReference>().ok_or("reference prepared state")?;
+        let expected=ink_core::registry::identity(&("ink-sealed-executable-v1",c.definition().bundle_sha256(),c.definition().exports(),c.definition().choices()))?;
+        if p.machine.identity!=expected{return Err("reference prepared identity".into());}p.physical.term()
+    }
+    fn transition_prepared(&self,c:&CheckedRepresentation,action:&str,p:&dyn std::any::Any,args:Vec<Term>)->LangResult<(Term,Box<dyn std::any::Any>)>{
+        let p=p.downcast_ref::<PreparedReference>().ok_or("reference prepared state")?;
+        let expected=ink_core::registry::identity(&("ink-sealed-executable-v1",c.definition().bundle_sha256(),c.definition().exports(),c.definition().choices()))?;
+        if p.machine.identity!=expected{return Err("reference prepared identity".into());}
+        let mut inputs=vec![p.physical.clone()];inputs.extend(args.iter().map(crate::definition_machine::Value::from_term).collect::<LangResult<Vec<_>>>()?);
+        let a=c.plan().actions.get(action).ok_or("reference prepared action")?;
+        let executed=p.machine.invoke_prepared(&a.execute,inputs)?;
+        let observed=p.machine.invoke_prepared(&a.observe,vec![executed.clone()])?.term()?;
+        let physical=p.machine.invoke_prepared(&a.next,vec![executed])?;
+        // Private output is bounded before it can become the next call's input.
+        physical.term()?;
+        Ok((observed,Box::new(PreparedReference{machine:p.machine.clone(),physical})))
     }
 }
 pub struct Session<E: Executor> {

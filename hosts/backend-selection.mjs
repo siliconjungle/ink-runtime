@@ -8,15 +8,16 @@ export function createSelector({policy='adaptive',staticBackend='cpu',costProfil
  return {
   clear(){},
   async run(key,candidates,selection='auto',context={}){
+   const required=selection==='gpu-required';if(required)selection='gpu';
    const baseline=candidates.find(c=>c.name==='cpu');if(!baseline)throw Error('compiled CPU baseline required');
    if(!['auto','cpu','javascript','gpu'].includes(selection))throw Error('invalid backend selection');
    let decision;
    if(selection==='auto')decision=await selectionRequest({options,context,eligible:candidates.map(c=>c.name)});
    else decision={backend:selection,reason:'explicit backend selection'};
    let chosen=candidates.find(c=>c.name===decision.backend);
-   if(!chosen){if(selection==='gpu')decision={backend:'cpu',reason:'GPU unavailable for this computation'};else throw Error('backend unavailable for this computation');chosen=baseline;}
+   if(!chosen){if(required)throw Error('GPU required but unavailable for this computation');if(selection==='gpu')decision={backend:'cpu',reason:'GPU unavailable for this computation'};else throw Error('backend unavailable for this computation');chosen=baseline;}
    try{if(chosen.prepare)await chosen.prepare();return{result:await chosen.run(),backend:chosen.name,reason:decision.reason,profile:decision};}
-   catch(error){if(chosen===baseline)throw error;if(baseline.prepare)await baseline.prepare();return{result:await baseline.run(),backend:'cpu',reason:`${chosen.name} fallback: ${error.message??error}`};}
+   catch(error){if(required||chosen===baseline)throw error;if(baseline.prepare)await baseline.prepare();return{result:await baseline.run(),backend:'cpu',reason:`${chosen.name} fallback: ${error.message??error}`};}
   }
  };
 }
