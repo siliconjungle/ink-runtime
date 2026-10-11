@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 [dependencies]
-ink-native-support = { git = "https://github.com/siliconjungle/ink-native-support", rev = "7e06120e81995d0440cdef6cf3e0847055e2e867" }
-ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "841a1898ea1c6e8c69845b94aa5f1c79a151d55f" }
-ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "2d24da041c6748d7545f5a2166d3b84f850962e9" }
-ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "ff37a4a5c531c0715bca7041f578b4564a8d3698" }
-ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "44ce52ca317ec26593607fa5e373c1e2a114195f" }
-ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "07817452071174690d01354fddeeed9039aaa3e8" }
-ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "ef686e08ec598d88ca74559c7c56c22068975b11" }
+ink-native-support = { git = "https://github.com/siliconjungle/ink-native-support", rev = "9ca4817ff1061bd388348e51341847d2ed0cf0de" }
+ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "2ca43fc39b18f8f0a5543521ee44f065569649fe" }
+ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "8ebe4e8b5041b45b0c9272bf06fc945c6a82181e" }
+ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "9dc3846fbb850d023352626b2a6fda4d64036abd" }
+ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "09bd3e43d92c64e38b1c2fcf5ea77f8ff2c9ac5d" }
+ink-lowering-wasm = { git = "https://github.com/siliconjungle/ink-lowering-wasm", rev = "0cee330e50e1a9cac985ff598da7035cc991a0e1" }
+ink-lowering-js = { git = "https://github.com/siliconjungle/ink-lowering-js", rev = "ac7edc1dcef522fe065b5bcb9d56f8eaac3002a5" }
 serde_json = { version="1", features=["float_roundtrip"] }
 sha2 = "0.10"
 
