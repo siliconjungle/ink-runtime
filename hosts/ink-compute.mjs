@@ -208,8 +208,9 @@ function compilePlan(plan, functions, native = false) {
     fail("invalid pipeline outputs");
   outputs = outputs.slice();
   const feedback = new Map();
-  if(Object.keys(plan.feedback ?? {}).length && steps.some(s=>s.f.graph_required))
-    reason ??= "GPU stage graph feedback is unsupported";
+  const graphExecution=steps.some(s=>s.f.graph_required);
+  if(graphExecution && steps.some(s=>!s.f.graph))
+    reason ??= "mixed GPU graph requires a graph descriptor for every function";
   for (const [input, id] of Object.entries(plan.feedback ?? {})) {
     if (!inputs.has(input) || !ids.has(id))
       fail("unknown feedback input or step");
@@ -246,6 +247,10 @@ function compilePlan(plan, functions, native = false) {
       ),
     0,
   );
+  if(graphExecution) for(const name of feedback.keys()) {
+    const c=constants[inputs.get(name).index];
+    bytes+=Math.max(4,c.count*width(c.type)*4+(c.type.kind==='list'?4:0));
+  }
   if (bytes > MAX_BYTES) reason ??= "GPU live-buffer budget exceeds 256 MiB";
   return {
     constants,
@@ -407,6 +412,7 @@ export async function loadInk(
     if(closed) fail('Ink runtime is closed');
     if(backend === 'javascript') return {...runJavascript(p),backend,reason:'explicit backend selection'};
     if(backend === 'cpu'){await ensureCpu();return {...runCpu(p),backend,reason:'explicit backend selection'};}
+    if(backend === 'gpu' && p.reason){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:p.reason};}
     const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
     const graphMode=p.steps.some(s=>s.f.graph_required);
     const features={input_elements:p.constants.reduce((n,c)=>n+(c.type.kind==='list'?c.count:0),0),input_bytes:p.constants.reduce((n,c)=>n+c.words.byteLength,0),output_capacity_elements:p.outputs.reduce((n,id)=>n+(p.steps[p.ids.get(id)].count??0),0),dispatches:p.steps.reduce((n,s)=>n+(graphMode?s.f.graph.nodes.length:(s.count?1:0)),0)*p.iterations,iterations:p.iterations};

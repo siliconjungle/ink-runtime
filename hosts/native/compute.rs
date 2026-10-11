@@ -385,16 +385,16 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
     if outputs.is_empty() {
         return Err("pipeline requires outputs".into());
     }
-    let mut feedback = BTreeMap::new();
-    if v.get("feedback")
-        .and_then(Value::as_object)
-        .is_some_and(|f| !f.is_empty())
-        && steps
-            .iter()
-            .any(|s| s.f["graph_required"].as_bool() == Some(true))
+    if steps
+        .iter()
+        .any(|s| s.f["graph_required"].as_bool() == Some(true))
+        && steps.iter().any(|s| !s.f["graph"].is_object())
     {
-        reason.get_or_insert("GPU stage graph feedback is unsupported".into());
+        reason.get_or_insert(
+            "GPU mixed stage graph requires a graph descriptor for every stage".into(),
+        );
     }
+    let mut feedback = BTreeMap::new();
     if let Some(f) = v.get("feedback") {
         for (input, id) in f.as_object().ok_or("feedback must be an object")? {
             let r = inputs.get(input).ok_or("unknown feedback input")?;
@@ -413,10 +413,35 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
     if constants.iter().any(|c| !c.finite) {
         reason.get_or_insert("non-finite f32 inputs require CPU".into());
     }
-    let bytes = constants
+    let feedback_bytes = if steps
         .iter()
-        .map(|c| ((c.words.len() + 1) * 4).max(4))
-        .sum::<usize>()
+        .any(|s| s.f["graph_required"].as_bool() == Some(true))
+    {
+        feedback.values().try_fold(0usize, |bytes, i| {
+            let step = &steps[*i];
+            let words = step
+                .count
+                .unwrap_or(0)
+                .checked_mul(width(&step.f["result"]))
+                .and_then(|n| n.checked_add(usize::from(step.f["result"]["kind"] == "list")))
+                .ok_or("feedback snapshot size overflow")?;
+            bytes
+                .checked_add(
+                    words
+                        .checked_mul(4)
+                        .ok_or("feedback snapshot size overflow")?
+                        .max(4),
+                )
+                .ok_or("feedback snapshot size overflow")
+        })?
+    } else {
+        0
+    };
+    let bytes = feedback_bytes
+        + constants
+            .iter()
+            .map(|c| ((c.words.len() + 1) * 4).max(4))
+            .sum::<usize>()
         + steps
             .iter()
             .map(|s| {

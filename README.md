@@ -119,3 +119,8 @@ zero. Dynamic graph output lengths remain device headers, never capacities.
 `close()` releases storage; engine close/device loss invalidates sessions. Runs
 are serialized by the host. This is resident input with owned readback, not a
 GPU-only timing boundary or a mutable public device handle.
+
+Source-bound representation codecs also transport supported List values through
+Nil/Cons datatypes, preserving nested element types and enforcing depth/length
+limits. Native definition execution retains its separate resource limits.
+See the Ink distribution docs/point-query-delta.md for tested domains and bounds.
