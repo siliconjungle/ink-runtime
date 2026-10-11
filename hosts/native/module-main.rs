@@ -4,7 +4,7 @@ fn run() -> Result<(), String> {
     run_with_pure(|state, step| {
         let name = step["pure"].as_str().ok_or("missing pure")?;
         let backend = step["backend"].as_str().unwrap_or("auto");
-        if !["auto", "cpu", "gpu"].contains(&backend) {
+        if !["auto", "cpu", "gpu", "gpu-required"].contains(&backend) {
             return Err("invalid native backend".into());
         }
         if backend == "cpu" {
@@ -13,6 +13,7 @@ fn run() -> Result<(), String> {
                 .map(|v| serde_json::json!({"value":v,"backend":"cpu"}))
         } else {
             engines.call(name, &step["args"], backend).or_else(|e| {
+                if backend=="gpu-required"{return Err(e);}
                 state
                     .pure(name, &step["args"])
                     .map(|v| serde_json::json!({"value":v,"backend":"cpu","reason":e}))

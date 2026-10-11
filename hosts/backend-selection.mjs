@@ -30,14 +30,15 @@ export function createSelector({expectedCalls=32,recheckEvery=32,clock=()=>perfo
   return {
     clear(){profiles.clear();},
     async run(key,candidates,selection='auto',context={}) {
+      const required=selection==='gpu-required';if(required)selection='gpu';
       const baseline=candidates.find(c=>c.name==='cpu');
       if(!baseline) throw Error('compiled CPU baseline required');
       if(!['auto','cpu','javascript','gpu'].includes(selection)) throw Error('backend must be auto, cpu, javascript or gpu');
       if(selection!=='auto') {
         const candidate=candidates.find(c=>c.name===selection);
-        if(!candidate) {if(selection==='gpu'){if(baseline.prepare)await baseline.prepare();return {result:await baseline.run(),backend:'cpu',reason:'GPU unavailable for this computation'};}throw Error(`backend ${selection} unavailable for this computation`);}
+        if(!candidate) {if(selection==='gpu'&&!required){if(baseline.prepare)await baseline.prepare();return {result:await baseline.run(),backend:'cpu',reason:'GPU unavailable for this computation'};}throw Error(`backend ${selection} unavailable for this computation`);}
         try {if(candidate.prepare)await candidate.prepare();return {result:await candidate.run(),backend:selection,reason:'explicit backend selection'};}
-        catch(error) {if(selection!=='gpu') throw error;if(baseline.prepare)await baseline.prepare(); return {result:await baseline.run(),backend:'cpu',reason:`GPU fallback: ${error.message??error}`};}
+        catch(error) {if(selection!=='gpu'||required) throw error;if(baseline.prepare)await baseline.prepare(); return {result:await baseline.run(),backend:'cpu',reason:`GPU fallback: ${error.message??error}`};}
       }
       if(policy!=='profile') {
         const available=candidates.map(c=>c.name).join(',');

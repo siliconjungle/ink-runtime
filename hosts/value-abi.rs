@@ -576,15 +576,14 @@ impl InkContext {
                 (V::F32(x), V::F32(y)) => {
                     let x = f32::from_bits(*x);
                     let y = f32::from_bits(*y);
-                    V::F32(
+                    V::F32(arithmetic_f32_bits(
                         match op {
                             "+" => x + y,
                             "-" => x - y,
                             "*" => x * y,
                             _ => return Err("float division".into()),
-                        }
-                        .to_bits(),
-                    )
+                        },
+                    ))
                 }
                 (V::Int(x), V::Int(y)) => V::Int(match op {
                     "+" => x + y,
@@ -606,6 +605,82 @@ unsafe extern "C" {
         args: *const u64,
         len: usize,
     ) -> u64;
+}
+// Transport excludes local owners at the type level. Private worker owners may
+// exist inside callbacks, but cannot be shared or returned across the boundary.
+#[derive(Clone)]
+enum FrozenV {Unit,Bool(bool),U32(u32),U64(u64),I32(i32),F32(u32),Int(BigInt),String(String),Id(String,u128),Record(String,BTreeMap<String,FrozenV>),Enum(String),Option(Option<Box<FrozenV>>),Result(bool,Box<FrozenV>),List(Vec<FrozenV>),Vector(Vec<FrozenV>)}
+impl FrozenV {
+    fn capture(v:V)->R<Self>{Ok(match v{
+        V::Unit=>Self::Unit,V::Bool(x)=>Self::Bool(x),V::U32(x)=>Self::U32(x),V::U64(x)=>Self::U64(x),V::I32(x)=>Self::I32(x),V::F32(x)=>Self::F32(x),V::Int(x)=>Self::Int(x),V::String(x)=>Self::String(x),V::Id(n,x)=>Self::Id(n,x),V::Enum(x)=>Self::Enum(x),
+        V::Record(n,xs)=>Self::Record(n,xs.into_iter().map(|(k,v)|Ok((k,Self::capture(v)?))).collect::<R<_>>()?),
+        V::Option(x)=>Self::Option(x.map(|x|Self::capture(*x).map(Box::new)).transpose()?),V::Result(b,x)=>Self::Result(b,Box::new(Self::capture(*x)?)),
+        V::List(xs)=>Self::List(xs.into_iter().map(Self::capture).collect::<R<_>>()?),V::Vector(xs)=>Self::Vector(xs.into_iter().map(Self::capture).collect::<R<_>>()?),V::Buffer(_)|V::Map(_)=>return Err("owned value crossed parallel boundary".into()),
+    })}
+    fn wire(&self)->Json{match self{
+      Self::Unit=>json!(["Unit"]),Self::Bool(x)=>json!(["Bool",x]),Self::U32(x)=>json!(["U32",x]),Self::U64(x)=>json!(["U64",x.to_string()]),Self::I32(x)=>json!(["I32",x]),Self::F32(x)=>json!(["F32",x]),Self::Int(x)=>json!(["Int",x.to_string()]),Self::String(x)=>json!(["String",x]),Self::Enum(x)=>json!(["Enum",x]),Self::Id(n,x)=>json!(["Id",n,x.to_string()]),Self::Record(n,fs)=>json!(["Record",n,fs.iter().map(|(k,v)|(k.clone(),v.wire())).collect::<serde_json::Map<_,_>>()]),Self::Option(x)=>json!(["Option",x.as_ref().map(|x|x.wire())]),Self::Result(b,x)=>json!(["Result",b,x.wire()]),Self::List(xs)=>json!(["List",xs.iter().map(Self::wire).collect::<Vec<_>>()]),Self::Vector(xs)=>json!(["Vector",xs.iter().map(Self::wire).collect::<Vec<_>>()])}}
+    fn from_wire(v:&Json,depth:usize,budget:&mut usize)->R<Self>{if depth>64||*budget==0{return Err("parallel value limit".into());}*budget-=1;let a=v.as_array().ok_or("parallel value")?;let tag=a.first().and_then(Json::as_str).ok_or("parallel value tag")?;let n=|i:usize|a.get(i).ok_or("parallel value field");let string=|i:usize|n(i)?.as_str().map(str::to_owned).ok_or("parallel string");Ok(match tag{
+      "Unit" if a.len()==1=>Self::Unit,"Bool" if a.len()==2=>Self::Bool(n(1)?.as_bool().ok_or("parallel Bool")?),"U32" if a.len()==2=>Self::U32(n(1)?.as_u64().and_then(|x|x.try_into().ok()).ok_or("parallel U32")?),"U64" if a.len()==2=>Self::U64(string(1)?.parse().map_err(|_|"parallel U64")?),"I32" if a.len()==2=>Self::I32(n(1)?.as_i64().and_then(|x|x.try_into().ok()).ok_or("parallel I32")?),"F32" if a.len()==2=>Self::F32(n(1)?.as_u64().and_then(|x|x.try_into().ok()).ok_or("parallel F32")?),"Int" if a.len()==2=>Self::Int(string(1)?.parse().map_err(|_|"parallel Int")?),"String" if a.len()==2=>Self::String(string(1)?),"Enum" if a.len()==2=>Self::Enum(string(1)?),"Id" if a.len()==3=>Self::Id(string(1)?,string(2)?.parse().map_err(|_|"parallel ID")?),"Record" if a.len()==3=>Self::Record(string(1)?,n(2)?.as_object().ok_or("parallel record")?.iter().map(|(k,v)|Ok((k.clone(),Self::from_wire(v,depth+1,budget)?))).collect::<R<_>>()?),"Option" if a.len()==2=>Self::Option(if n(1)?.is_null(){None}else{Some(Box::new(Self::from_wire(n(1)?,depth+1,budget)?))}),"Result" if a.len()==3=>Self::Result(n(1)?.as_bool().ok_or("parallel Result")?,Box::new(Self::from_wire(n(2)?,depth+1,budget)?)),"List"|"Vector" if a.len()==2=>{let xs=n(1)?.as_array().ok_or("parallel list")?.iter().map(|v|Self::from_wire(v,depth+1,budget)).collect::<R<Vec<_>>>()?;if tag=="List"{Self::List(xs)}else{Self::Vector(xs)}},_=>return Err("parallel value shape".into())})}
+    fn value(self)->V{match self{Self::Unit=>V::Unit,Self::Bool(x)=>V::Bool(x),Self::U32(x)=>V::U32(x),Self::U64(x)=>V::U64(x),Self::I32(x)=>V::I32(x),Self::F32(x)=>V::F32(x),Self::Int(x)=>V::Int(x),Self::String(x)=>V::String(x),Self::Id(n,x)=>V::Id(n,x),Self::Enum(x)=>V::Enum(x),Self::Record(n,xs)=>V::Record(n,xs.into_iter().map(|(k,v)|(k,v.value())).collect()),Self::Option(x)=>V::Option(x.map(|x|Box::new(x.value()))),Self::Result(b,x)=>V::Result(b,Box::new(x.value())),Self::List(xs)=>V::List(xs.into_iter().map(Self::value).collect()),Self::Vector(xs)=>V::Vector(xs.into_iter().map(Self::value).collect())}}
+}
+// Diagnostic receipt counts actual entered OS threads, never planned jobs.
+static INK_PARALLEL_RECEIPT: std::sync::LazyLock<std::sync::Mutex<(u64,std::collections::BTreeSet<String>,std::collections::BTreeSet<String>)>> = std::sync::LazyLock::new(||std::sync::Mutex::new((0,std::collections::BTreeSet::new(),std::collections::BTreeSet::new())));
+fn ink_parallel_start_receipt(){INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock").2.clear();}
+fn ink_parallel_record_thread(){let mut r=INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock");r.0+=1;let id=format!("{:?}",std::thread::current().id());r.1.insert(id.clone());r.2.insert(id);}
+pub fn ink_parallel_statistics()->(u64,Vec<String>,Vec<String>){let r=INK_PARALLEL_RECEIPT.lock().expect("parallel receipt lock");(r.0,r.1.iter().cloned().collect(),r.2.iter().cloned().collect())}
+
+// Pure callbacks get independent arenas; no table or event storage crosses workers.
+thread_local! {static PARALLEL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };}
+unsafe extern "C"{fn ink_parallel_callback(ctx:*mut std::ffi::c_void,callback:u32,index:u32,item:u64,captures:*const u64)->u64;}
+#[no_mangle]
+pub unsafe extern "C" fn ink_parallel(ctx:*mut InkContext,input:u64,grain:u32,callback:u32,captures:*const u64,count:usize,buffer:u32)->u64 {
+    let c=&mut *ctx;
+    let result=(||->R<V>{
+        let input=c.value(input)?;
+        let items=match input { V::List(xs) if buffer==0 => xs, V::Buffer(xs) if buffer==1 => xs.freeze(), _=>return Err("parallel input type".into()) };
+        let handles=if count==0 { &[] } else { std::slice::from_raw_parts(captures,count) };
+        let captures=handles.iter().map(|h|FrozenV::capture(c.value(*h)?)).collect::<R<Vec<_>>>()?;
+        let items=items.into_iter().map(FrozenV::capture).collect::<R<Vec<_>>>()?;
+        let meta=c.meta.clone();
+        #[cfg(target_arch="wasm32")]
+        if !PARALLEL_DEPTH.with(|d|d.get()>0)&&items.len()/(grain.max(1) as usize)>=2{
+            let values=__ink_parallel_host(json!({"callback":callback,"items":items.iter().map(FrozenV::wire).collect::<Vec<_>>(),"captures":captures.iter().map(FrozenV::wire).collect::<Vec<_>>(),"grain":grain}))?;
+            let mut budget=1000000;
+            let output=values.as_array().ok_or("parallel output array")?.iter().map(|v|FrozenV::from_wire(v,0,&mut budget).map(FrozenV::value)).collect::<R<Vec<_>>>()?;
+            if output.len()!=items.len(){return Err("parallel result length".into());}
+            return Ok(if buffer==1{V::Buffer(OwnedBuffer::new(output))}else{V::List(output)});
+        }
+
+        let requested=std::env::var("INK_THREADS").ok().and_then(|x|x.parse::<usize>().ok()).unwrap_or_else(||std::thread::available_parallelism().map(|x|x.get()).unwrap_or(1)).clamp(1,32);
+        let workers=if cfg!(target_arch="wasm32")||PARALLEL_DEPTH.with(|d|d.get()>0) {1} else {requested.min(items.len()/(grain.max(1) as usize)).max(1)};
+        let chunk=items.len().div_ceil(workers).max(1);
+        let run=|start:usize,xs:&[FrozenV]|->R<Vec<FrozenV>>{
+            struct Guard(u32);impl Drop for Guard{fn drop(&mut self){PARALLEL_DEPTH.with(|d|d.set(self.0));}}
+            let _guard=Guard(PARALLEL_DEPTH.with(|d|{let old=d.get();d.set(old+1);old}));
+            let mut local=InkContext{values:vec![],error:None,fuel:100000000,arena_bytes:0,meta:meta.clone(),tables:vec![],version:0,staged:vec![],outbox:vec![]};
+            let captures=captures.iter().cloned().map(|v|local.put(v.value())).collect::<Vec<_>>();
+            let mut out=Vec::with_capacity(xs.len());
+            for (i,item) in xs.iter().enumerate(){
+                let item=local.put(item.clone().value());
+                let result=ink_parallel_callback((&mut local as *mut InkContext).cast(),callback,(start+i).try_into().map_err(|_|"parallel index limit")?,item,captures.as_ptr());
+                if let Some(error)=local.error.take(){return Err(match error{Failure::Host(e)=>e,Failure::Abort(_)=>"pure callback aborted".into()});}
+                out.push(FrozenV::capture(local.value(result)?)?);
+                // Captures remain valid, invocation-local temporaries do not accumulate.
+                local.values.truncate(captures.iter().filter(|h|**h>>32==0).count());
+                local.arena_bytes=local.values.iter().map(V::weight).sum();
+            }
+            Ok(out)
+        };
+        let output=if workers==1 {run(0,&items)?} else {ink_parallel_start_receipt();std::thread::scope(|scope|{
+            let joins=items.chunks(chunk).enumerate().map(|(i,xs)|scope.spawn(move||{ink_parallel_record_thread();run(i*chunk,xs)})).collect::<Vec<_>>();
+            let mut out=Vec::with_capacity(items.len());
+            for task in joins {out.extend(task.join().map_err(|_|"parallel worker panicked")??);}
+            Ok::<_,String>(out)
+        })?};
+        let output=output.into_iter().map(FrozenV::value).collect();
+        Ok(if buffer==1 {V::Buffer(OwnedBuffer::new(output))} else {V::List(output)})
+    })();
+    c.result(result)
 }
 #[no_mangle]
 pub unsafe extern "C" fn ink_failed(ctx: *mut InkContext) -> bool {
@@ -792,6 +867,7 @@ pub struct State {
     ctx: Box<InkContext>,
 }
 impl State {
+    pub fn parallel_statistics()->Json{let(n,ids,last)=ink_parallel_statistics();json!({"workers":n,"workerIds":ids,"lastWorkerIds":last})}
     pub fn new() -> Self {
         let meta: Json =
             serde_json::from_str(include_str!("metadata.json")).expect("compiled metadata");
@@ -809,6 +885,22 @@ impl State {
                 outbox: vec![],
             }),
         }
+    }
+    #[cfg(target_arch="wasm32")]
+    pub fn parallel_worker(&mut self,task:&Json)->R<Json>{
+        let callback=task["callback"].as_u64().and_then(|x|x.try_into().ok()).ok_or("parallel callback")?;
+        let start=task["start"].as_u64().and_then(|x|u32::try_from(x).ok()).ok_or("parallel start")?;
+        let mut budget=1000000;
+        let captures=task["captures"].as_array().ok_or("parallel captures")?.iter().map(|v|FrozenV::from_wire(v,0,&mut budget).map(|v|self.ctx.put(v.value()))).collect::<R<Vec<_>>>()?;
+        struct Guard(u32);impl Drop for Guard{fn drop(&mut self){PARALLEL_DEPTH.with(|d|d.set(self.0));}}
+        let _guard=Guard(PARALLEL_DEPTH.with(|d|{let old=d.get();d.set(old+1);old}));
+        let captured_count=self.ctx.values.len();let mut out=vec![];
+        for (i,item) in task["items"].as_array().ok_or("parallel items")?.iter().enumerate(){
+            let item=self.ctx.put(FrozenV::from_wire(item,0,&mut budget)?.value());
+            let value=unsafe{ink_parallel_callback((&mut *self.ctx as *mut InkContext).cast(),callback,start.checked_add(i.try_into().map_err(|_|"parallel index")?).ok_or("parallel index")?,item,captures.as_ptr())};
+            if let Some(error)=self.ctx.error.take(){return Err(match error{Failure::Host(e)=>e,Failure::Abort(_)=>"parallel abort".into()});}
+            out.push(FrozenV::capture(self.ctx.value(value)?)?.wire());self.ctx.values.truncate(captured_count);self.ctx.arena_bytes=self.ctx.values.iter().map(V::weight).sum();
+        }Ok(Json::Array(out))
     }
     fn call(&mut self, name: &str, args: &Json, kind: u32) -> R<Json> {
         let section = if kind == 0 { "functions" } else { "actions" };
@@ -1118,3 +1210,6 @@ fn snapshot_layout(meta: &Json) -> R<portable::Layout> {
             .collect::<R<_>>()?,
     })
 }
+
+#[inline(never)]
+fn arithmetic_f32_bits(value:f32)->u32{if value.is_nan(){0x7fc00000}else{value.to_bits()}}

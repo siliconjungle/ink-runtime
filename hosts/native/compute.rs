@@ -36,6 +36,7 @@ pub enum Backend {
     Auto,
     Cpu,
     Gpu,
+    GpuRequired,
 }
 impl Backend {
     pub fn parse(s: &str) -> Result<Self> {
@@ -43,6 +44,7 @@ impl Backend {
             "auto" => Ok(Self::Auto),
             "cpu" => Ok(Self::Cpu),
             "gpu" => Ok(Self::Gpu),
+            "gpu-required" => Ok(Self::GpuRequired),
             _ => Err("backend must be auto, cpu or gpu".into()),
         }
     }
@@ -180,11 +182,7 @@ fn unpack(d: &Data, t: &Value) -> Value {
             "u64" => {
                 let n = w[*i] as u64 + ((w[*i + 1] as u64) << 32);
                 *i += 2;
-                if n > 9007199254740991 {
-                    json!(n.to_string())
-                } else {
-                    json!(n)
-                }
+                json!(n)
             }
             k => {
                 let n = w[*i];
@@ -410,9 +408,7 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
             feedback.insert(input.clone(), i);
         }
     }
-    if constants.iter().any(|c| !c.finite) {
-        reason.get_or_insert("non-finite f32 inputs require CPU".into());
-    }
+
     let feedback_bytes = if steps
         .iter()
         .any(|s| s.f["graph_required"].as_bool() == Some(true))
@@ -616,6 +612,7 @@ impl Engine {
     }
     pub fn pipeline(&mut self, source: &Value, backend: Backend) -> Result<Value> {
         let p = compile(source, &self.manifest)?;
+        if backend==Backend::GpuRequired{if let Some(reason)=&p.reason{return Err(reason.clone());}}
         if backend == Backend::Cpu || p.reason.is_some() {
             let mut r = cpu(&p)?;
             r["backend"] = json!("cpu");
@@ -662,7 +659,7 @@ impl Engine {
             }
             self.gpu.as_mut().unwrap().prepare(&p)?;
             let setup_ms = ms(setup);
-            if backend == Backend::Gpu {
+            if matches!(backend,Backend::Gpu|Backend::GpuRequired) {
                 let mut r = self.gpu.as_ref().unwrap().execute(&p)?;
                 r["backend"] = json!("gpu");
                 r["reason"] = json!("explicit GPU selection");
@@ -720,6 +717,7 @@ impl Engine {
         match selected {
             Ok(r) => Ok(r),
             Err(e) => {
+                if backend==Backend::GpuRequired{return Err(e);}
                 self.profiles.remove(&key);
                 let mut r = cpu(&p)?;
                 r["backend"] = json!("cpu");

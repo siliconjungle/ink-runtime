@@ -25,6 +25,7 @@ pub enum Backend {
     Auto,
     Cpu,
     Gpu,
+    GpuRequired,
 }
 impl Backend {
     pub fn parse(s: &str) -> Result<Self> {
@@ -32,6 +33,7 @@ impl Backend {
             "auto" => Ok(Self::Auto),
             "cpu" => Ok(Self::Cpu),
             "gpu" => Ok(Self::Gpu),
+            "gpu-required" => Ok(Self::GpuRequired),
             _ => Err("backend must be auto, cpu or gpu".into()),
         }
     }
@@ -267,6 +269,7 @@ impl Engine {
     }
     fn call_prepared(&mut self, f: &Value, args: &[Arg], backend: Backend) -> Result<Value> {
         let output = |value: u64, backend: &str, reason: String, profile: Option<&Profile>| json!({"value":if f["result"]=="bool" {json!(value!=0)}else{json!(value)},"backend":backend,"reason":reason,"profile":profile.map(Profile::json)});
+        if backend==Backend::GpuRequired&&f["gpu"].is_null(){return Err(f["cpu_reason"].as_str().unwrap_or("CPU-only function").into());}
         if backend == Backend::Cpu || f["gpu"].is_null() {
             return Ok(output(
                 cpu(&f, &args),
@@ -287,7 +290,7 @@ impl Engine {
             let setup_start = Instant::now();
             self.prepare(&f, &args)?;
             let setup_ms = ms(setup_start);
-            if backend == Backend::Gpu {
+            if matches!(backend,Backend::Gpu|Backend::GpuRequired) {
                 return Ok((
                     self.gpu.as_mut().unwrap().execute(&f, &args)?,
                     true,
@@ -361,6 +364,7 @@ impl Engine {
                 profile.as_ref(),
             )),
             Err(e) => {
+                if backend==Backend::GpuRequired{return Err(e);}
                 self.profiles.remove(&key);
                 // Cache failed shader/device decisions per function. A fresh Engine
                 // can retry after a host/device change; no application state exists.
