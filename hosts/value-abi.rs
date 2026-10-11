@@ -332,6 +332,17 @@ impl InkContext {
         }
     }
     fn primitive(&mut self, op: &str, a: &mut [V]) -> R<V> {
+        if ["word_not","word_and","word_or","word_xor","wrapping_shl","wrapping_shr","rotate_left","rotate_right"].contains(&op) {
+            macro_rules! apply {($x:expr,$variant:ident)=>{{
+                let x=*$x;
+                let r=if op=="word_not" {!x} else if ["wrapping_shl","wrapping_shr","rotate_left","rotate_right"].contains(&op) {
+                    let V::U32(k)=a[1] else{return Err("word shift count".into())};
+                    match op {"wrapping_shl"=>x.wrapping_shl(k),"wrapping_shr"=>x.wrapping_shr(k),"rotate_left"=>x.rotate_left(k),_=>x.rotate_right(k)}
+                } else {let V::$variant(y)=a[1] else{return Err("word operand type".into())};match op {"word_and"=>x&y,"word_or"=>x|y,_=>x^y}};
+                V::$variant(r)
+            }};}
+            return Ok(match &a[0] {V::U32(x)=>apply!(x,U32),V::U64(x)=>apply!(x,U64),V::I32(x)=>apply!(x,I32),_=>return Err("word type".into())});
+        }
         if op=="list_length" {let V::List(xs)=&a[0] else{return Err("list length".into())};return Ok(V::U32(xs.len().try_into().map_err(|_|"list exceeds u32")?));}
         if op=="buffer_empty" {return Ok(V::Buffer(OwnedBuffer::new(vec![])));}
         if op=="map_empty" {return Ok(V::Map(OwnedMap::new()));}
@@ -444,7 +455,7 @@ impl InkContext {
             });
         }
         Ok(match op {
-            "list" => V::List(vec![]),
+            "list" => V::List(a.iter_mut().map(|v| std::mem::replace(v, V::Unit)).collect()),
             "vector" => V::Vector(
                 a.iter_mut()
                     .map(|v| std::mem::replace(v, V::Unit))
@@ -499,6 +510,7 @@ impl InkContext {
                 V::U32(n) => V::U32(n.wrapping_neg()),
                 V::U64(n) => V::U64(n.wrapping_neg()),
                 V::I32(n) => V::I32(n.wrapping_neg()),
+                V::Int(n) => V::Int(-n),
                 V::F32(n) => V::F32(n ^ 0x80000000),
                 _ => return Err("numeric negation".into()),
             },
