@@ -136,12 +136,24 @@ impl Engine {
         let entry = route["entry"].as_str().ok_or("missing route entry")?;
         let f = self.manifest["functions"].as_array().ok_or("missing compiled functions")?.iter().find(|f| f["name"] == entry).ok_or("missing compiled route entry")?;
         let result_bool = f["result"]=="bool";
-        let inputs = parse_args(f, args)?; // Validate/capture before any device work.
+        let mut inputs = parse_args(f, args)?.into_iter().map(Some).collect::<Vec<_>>(); // Validate/capture before any device work.
+        let resources: Value = assets::SOURCE_RESOURCES.map(serde_json::from_str).transpose().map_err(|e|e.to_string())?.unwrap_or(Value::Null);
+        if let Some(limit)=resources["admission"]["max_pending_bytes"].as_u64() {
+            let bytes=inputs.iter().zip(f["params"].as_array().ok_or("missing entry params")?).try_fold(0u64,|sum,(arg,param)| {
+                let size=match arg.as_ref().ok_or("missing captured input")? {
+                    Arg::U32List(v)=>(v.len() as u64).checked_mul(4),
+                    Arg::U64List(v)=>(v.len() as u64).checked_mul(8),
+                    Arg::Scalar(_)=>Some(if param["type"]=="u64"{8}else{4}),
+                }.ok_or("captured size overflow")?;
+                sum.checked_add(size).ok_or("captured size overflow")
+            })?;
+            if bytes>limit { return Err("INK_BACKPRESSURE: compiled admission credits exhausted".into()); }
+        }
         let mut values = BTreeMap::<String, Arg>::new();
         let mut evidence = Vec::new();
-        let resolve = |r: &Value, values: &BTreeMap<String, Arg>| -> Result<Arg> {
+        let resolve = |r: &Value, values: &BTreeMap<String, Arg>, inputs: &[Option<Arg>]| -> Result<Arg> {
             if let Some(i) = r["Input"].as_u64() {
-                return inputs.get(i as usize).cloned().ok_or("route input out of range".into());
+                return inputs.get(i as usize).cloned().flatten().ok_or("route input out of range".into());
             }
             if let Some(id) = r["Stage"].as_str() {
                 return values.get(id).cloned().ok_or("missing route result".into());
@@ -156,7 +168,7 @@ impl Engine {
         };
         for stage in route["stages"].as_array().ok_or("missing route stages")? {
             let bridge = Instant::now();
-            let arguments = stage["arguments"].as_array().ok_or("missing route arguments")?.iter().map(|r|resolve(r,&values)).collect::<Result<Vec<_>>>()?;
+            let arguments = stage["arguments"].as_array().ok_or("missing route arguments")?.iter().map(|r|resolve(r,&values,&inputs)).collect::<Result<Vec<_>>>()?;
             let bridge_ms = bridge.elapsed().as_secs_f64()*1000.;
             let mode = match (stage["backend"].as_str(), stage["domain"].as_str()) {
                 (Some("c"), Some("cpu")) => Backend::Cpu,
@@ -168,9 +180,19 @@ impl Engine {
             let result = self.call_prepared(&function, &arguments, mode)?;
             let id = stage["id"].as_str().ok_or("missing stage id")?;
             values.insert(id.into(), Arg::Scalar(if function["result"]=="bool" {result["value"].as_bool().ok_or("invalid Bool result")? as u64} else {result["value"].as_u64().ok_or("invalid word result")?}));
+            if let Some(releases) = resources["releases"].as_array() {
+                for release in releases.iter().filter(|r|r["after"]==id) {
+                    if let Some(released) = release["inputs"].as_array() {
+                        for input in released { inputs[input.as_u64().ok_or("invalid input release")? as usize] = None; }
+                    }
+                    for value in release["values"].as_array().ok_or("invalid release list")? {
+                        values.remove(value.as_str().ok_or("invalid release value")?);
+                    }
+                }
+            }
             evidence.push(json!({"id":id,"function":stage["function"],"requested":stage["domain"],"backend":result["backend"],"reason":result["reason"],"bridge_ms":bridge_ms,"execution_ms":called.elapsed().as_secs_f64()*1000.}));
         }
-        let value = match resolve(&route["output"],&values)? { Arg::Scalar(n) => n, _ => return Err("route result must be scalar".into()) };
+        let value = match resolve(&route["output"],&values,&inputs)? { Arg::Scalar(n) => n, _ => return Err("route result must be scalar".into()) };
         Ok(json!({"value":if result_bool {json!(value!=0)} else {json!(value)},"stages":evidence,"total_ms":start.elapsed().as_secs_f64()*1000.,"scope":"pure values; immutable inputs shared across stages; scalar stage results materialise on host; physical ABI and backends trusted"}))
     }
     fn prepare(&mut self, f: &Value, args: &[Arg]) -> Result<()> {

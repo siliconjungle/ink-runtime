@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {createUsageRecorder,recordCall} from '../hosts/usage-profile.mjs';
+const recorder=createUsageRecorder({source:'a'.repeat(64),target:{backend:'webgpu'},workload:{distribution:'actual-session'}});
+assert.equal(recordCall(recorder,'call:query',()=>4,{function:'query',input_bytes:40,input_elements:10}),4);
+assert.equal(await recordCall(recorder,'call:query',async()=>5),5);
+assert.throws(()=>recordCall(recorder,'call:update',()=>{throw Error('failed')}));
+await assert.rejects(recordCall(recorder,'call:update',async()=>{throw Error('failed')}));
+let snapshot=recorder.snapshot();assert.equal(snapshot.counts['call:query'],2);assert.equal(snapshot.failed,2);assert.equal(snapshot.peak_pending_bytes,40);
+snapshot.counts['call:query']=900;assert.equal(recorder.snapshot().counts['call:query'],2);
+assert.equal(recordCall({observe(){throw Error('observer');}},'call:query',()=>7),7);
+const automatic=createUsageRecorder({source:'a'.repeat(64),target:{backend:'webgpu'}});recordCall(automatic,'call:query',()=>1,{input_bytes:40,input_elements:10});assert.equal(automatic.snapshot().workload.distribution.recorded_frequencies['call:query'],1);
+console.log('usage recorder: sync/async, failure accounting, bounded shapes and detached snapshots passed');
