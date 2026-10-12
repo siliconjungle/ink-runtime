@@ -147,7 +147,17 @@ required graph and returns fresh full owned readback values plus actual counters
 zero. Dynamic graph output lengths remain device headers, never capacities.
 `close()` releases storage; engine close/device loss invalidates sessions. Runs
 are serialized by the host. This is resident input with owned readback, not a
-GPU-only timing boundary or a mutable public device handle.
+GPU-only timing boundary.
+
+`await open(plan, {backend})` opens a resident session with feedback: `step(n)`
+runs iterations without readback, `read(request)` returns whole outputs, a
+length, a slice or a device reduction, `write(input, value)` replaces an input
+(or the carried feedback value), and `buffer(stepId)` exposes the step's
+`GPUBuffer` for renderers on a device supplied as `loadInk(url, {device})`.
+Ineligible plans and GPU failures at open run the same session on the compiled
+CPU. Native `Engine` has the same operations (`open`, `step`, `read`, `write`,
+`view`, `finish`, `close`, `with_device`). See docs/gpu-compute.md in the
+distribution.
 
 Source-bound representation codecs also transport supported List values through
 Nil/Cons datatypes, preserving nested element types and enforcing depth/length
