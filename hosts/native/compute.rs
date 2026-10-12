@@ -292,6 +292,9 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
     })
 }
 fn cpu_call(f: &Value, args: &[Data]) -> Result<Data> {
+    if !f["precondition"].is_null() && cpu_call(&f["precondition"],args)?.words.first()!=Some(&1) {
+        return Err("contract precondition failed".into());
+    }
     let pointers: Vec<*const c_void> = args.iter().map(|d| d.words.as_ptr().cast()).collect();
     let lengths: Vec<usize> = args.iter().map(|d| d.count).collect();
     unsafe {

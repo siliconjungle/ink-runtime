@@ -218,6 +218,7 @@ export async function loadInk(
   }
   const adapter=createDevice({root, enabled:gpu, onLost:()=>{gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,MAX_BYTES});
   function cpuCall(f, args, consume) {
+    if(f.precondition && !cpuCall(f.precondition,args,data=>data.words[0]===1))fail('contract precondition failed');
     cpu.ink_compute_reset();
     try {
       const ptrs = cpu.ink_alloc(args.length, 4),

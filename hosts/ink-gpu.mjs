@@ -52,6 +52,7 @@ export async function loadInk(base,options={}){
   }
   async function run(f,args,backend){
     if(closed)throw Error('Ink runtime is closed');
+    if(f.precondition){await ensureCpu();if(cpu(f.precondition,args)!==true)throw Error('contract precondition failed');}
     if(backend==='javascript') return {value:javascriptFunctions.get(f.name)(...args),backend,reason:'explicit backend selection'};
     const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>cpu(f,args)}, {name:'javascript',startupMs:jsStartup,verify:(value,reference)=>value===reference,run:()=>javascriptFunctions.get(f.name)(...args)}];
     if(f.gpu && !disabled.has(f.index) && options.gpu!==false) candidates.push({name:'gpu',async:true,verify:(value,reference)=>value===reference,prepare:()=>adapter.prepare(f,args),run:async()=>{

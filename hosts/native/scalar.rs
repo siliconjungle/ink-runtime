@@ -225,6 +225,7 @@ impl Engine {
         self.call_prepared(&f, &args, backend)
     }
     fn call_prepared(&mut self, f: &Value, args: &[Arg], backend: Backend) -> Result<Value> {
+        if !f["precondition"].is_null() && cpu(&f["precondition"],args)!=1 {return Err("contract precondition failed".into());}
         let output = |value:u64,backend:&str,reason:String,profile:Option<&Value>|json!({"value":if f["result"]=="bool"{json!(value!=0)}else{json!(value)},"backend":backend,"reason":reason,"profile":profile});
         if backend==Backend::GpuRequired && f["gpu"].is_null(){return Err(f["cpu_reason"].as_str().unwrap_or("CPU-only function").into());}
         if backend == Backend::Cpu || f["gpu"].is_null() {

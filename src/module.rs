@@ -63,6 +63,9 @@ fn ty(t: &Type, names: &mut BTreeSet<String>) {
     }
 }
 fn closure(p: &Program, name: &str) -> LangResult<CheckedModule> {
+    if p.contracts.precondition_checks.contains_key(name) {
+        return Err("contract precondition ingress uses the complete host".into());
+    }
     let mut names = BTreeSet::from([name.to_owned()]);
     let mut types = BTreeSet::new();
     loop {
@@ -103,6 +106,9 @@ fn closure(p: &Program, name: &str) -> LangResult<CheckedModule> {
     sub.keeps.clear();
     sub.events.clear();
     sub.rules.clear();
+    // The complete module was checked before extracting this literal closure.
+    // Internal calls already have checked caller obligations.
+    sub.contracts=Default::default();
     CheckedModule::from_source(sub)
 }
 fn symbols(source: &str, prefix: &str) -> String {
@@ -174,12 +180,11 @@ fn emit_checked(
     let mut fields = String::new();
     let mut init = String::new();
     for (i, f) in p.functions.iter().enumerate() {
-        let sub = closure(p, &f.name)?;
         let folder = format!("gpu/f{i}");
-        let result = super::assemble(&sub, &dir.join(&folder), None, None);
-        if result.is_ok() {
-            super::put(&dir.join(&folder), "core.json", sub.bytes()?)?;
-        }
+        let result = closure(p,&f.name).and_then(|sub|{
+            super::assemble(&sub,&dir.join(&folder),None,None)?;
+            super::put(&dir.join(&folder),"core.json",sub.bytes()?)
+        });
         let capability = match result {
             Ok(()) => {
                 let manifest: serde_json::Value = serde_json::from_slice(
