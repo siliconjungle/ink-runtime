@@ -58,7 +58,14 @@ pub fn emit_gpu(p: &Program, dir: &Path) -> LangResult<()> {
         Err(_) => module::emit(&checked, dir),
     }
 }
+pub fn emit_planned(plan:&ink_core::planning::CheckedPlan,dir:&Path)->LangResult<()> {
+    match assemble(plan.module(),dir,None){Ok(())=>Ok(()),Err(_)=>module::emit_planned(plan,dir)}
+}
 pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path) -> LangResult<()> {
+    let component;
+    let route=if route.module().pure_program().is_err() {
+        component=route.pure_component()?;&component
+    }else{route};
     if uses_packed_compute(route.module().pure_program()?) {
         return Err("routed scalar ABI does not support packed compute plans".into());
     }
@@ -288,6 +295,9 @@ pub fn emit_c_program_selected(
     dir: &Path,
 ) -> LangResult<()> {
     emit_c_artifact(ink_lowering_c::complete::lower_selected(selected)?, dir)
+}
+pub fn emit_c_program_planned(plan: &ink_core::planning::CheckedPlan, dir: &Path) -> LangResult<()> {
+    emit_c_artifact(ink_lowering_c::complete::lower_planned(plan)?,dir)
 }
 fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> LangResult<()> {
     fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;

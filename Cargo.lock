@@ -74,7 +74,7 @@ dependencies = [
 [[package]]
 name = "ink-core"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lang?rev=03f40b014a1dc44cfeaf387ca3cbe587ee0cd5ba#03f40b014a1dc44cfeaf387ca3cbe587ee0cd5ba"
+source = "git+https://github.com/siliconjungle/ink-lang?rev=c26201443ff9c45a5e32415ea0c21bcbecd370fb#c26201443ff9c45a5e32415ea0c21bcbecd370fb"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -86,7 +86,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=1b2fe3b8ec3625011cde62bdcd1e7cabc3333a9e#1b2fe3b8ec3625011cde62bdcd1e7cabc3333a9e"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=ff4e03282df0c7eb975fff8abc2c5be012b642e7#ff4e03282df0c7eb975fff8abc2c5be012b642e7"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -97,7 +97,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=90f163cd8b2e1a39b94fdd84218dbb713bd92f03#90f163cd8b2e1a39b94fdd84218dbb713bd92f03"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=e32a5db114193abccef3cc4cd01e1e704f964f81#e32a5db114193abccef3cc4cd01e1e704f964f81"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=cf0a3aa76cdcb79620157672b82689987ee578dc#cf0a3aa76cdcb79620157672b82689987ee578dc"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=ab8fead297428dcf9da588e549a8644f1b6ece41#ab8fead297428dcf9da588e549a8644f1b6ece41"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-rust"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=dba393ca171577c96dca1cb21c8f8495509be415#dba393ca171577c96dca1cb21c8f8495509be415"
+source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=09fbc91ebdc84ca8ce06598a48ef503cf1fb4ab0#09fbc91ebdc84ca8ce06598a48ef503cf1fb4ab0"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -135,7 +135,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=49a327afb32f26825be36bac1e17dbc9e3118fcb#49a327afb32f26825be36bac1e17dbc9e3118fcb"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=192ea69a3fe3f0d0d01c7208d4b7012a7b5812ae#192ea69a3fe3f0d0d01c7208d4b7012a7b5812ae"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -259,9 +259,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.152"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1741ab7a6cc54a03a89b5d563ed60075c277d9e3cfa73ad0c1f23f23974703c6"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
@@ -283,9 +283,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.7"
+version = "3.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d62a2e0561533f2ca2561d0cf27fd9fedb640a1bf2616ff5d5c80d99017faadc"
+checksum = "01016da373cd8f7ef12624f796309f5c31ba8d646dd08856c02cd741d823c622"
 dependencies = [
  "proc-macro2",
  "quote",

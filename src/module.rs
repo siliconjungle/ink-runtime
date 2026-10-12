@@ -134,22 +134,29 @@ fn gpu_entry_eligible(entry: &serde_json::Value) -> bool {
 }
 
 pub fn emit(module: &CheckedModule, dir: &Path) -> LangResult<()> {
-    emit_checked(module, None, dir)
+    emit_checked(module, None,None, dir)
 }
 pub fn emit_selected(
     selected: &ink_core::optimisation::CheckedSelection,
     dir: &Path,
 ) -> LangResult<()> {
-    emit_checked(selected.module(), Some(selected), dir)
+    emit_checked(selected.module(), Some(selected),None, dir)
+}
+pub fn emit_planned(plan:&ink_core::planning::CheckedPlan,dir:&Path)->LangResult<()> {
+    emit_checked(plan.module(),None,Some(plan),dir)
 }
 fn emit_checked(
     module: &CheckedModule,
     selected: Option<&ink_core::optimisation::CheckedSelection>,
+    plan:Option<&ink_core::planning::CheckedPlan>,
     dir: &Path,
 ) -> LangResult<()> {
     let p = module.program();
     fs::create_dir_all(dir.join("native/src")).map_err(|e| e.to_string())?;
-    let js = if let Some(selected) = selected {
+    let js = if let Some(plan)=plan {
+        super::emit_c_program_planned(plan,&dir.join("cpu"))?;
+        ink_lowering_js::lower_planned(plan)?
+    } else if let Some(selected) = selected {
         super::emit_c_program_selected(selected, &dir.join("cpu"))?;
         ink_lowering_js::lower_selected(selected)?
     } else {
