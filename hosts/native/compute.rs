@@ -288,7 +288,7 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
     if bytes > MAX_BYTES {
         reason.get_or_insert("GPU live-buffer budget exceeds 256 MiB".into());
     }
-    Ok(Plan {
+    let p = Plan {
         constants,
         inputs,
         steps,
@@ -297,7 +297,11 @@ fn compile(v: &Value, m: &Value) -> Result<Plan> {
         iterations,
         reason,
         bytes,
-    })
+    };
+    if iterations.saturating_mul(device::dispatch_count(&p)) > MAX_DISPATCHES {
+        return Err("pipeline iteration/dispatch limit".into());
+    }
+    Ok(p)
 }
 fn cpu_call(f: &Value, args: &[Data]) -> Result<Data> {
     let pointers: Vec<*const c_void> = args.iter().map(|d| d.words.as_ptr().cast()).collect();
@@ -684,6 +688,9 @@ impl Engine {
             return Err("session step iteration limit".into());
         }
         let s = self.sessions.get_mut(&session).ok_or("unknown session")?;
+        if iterations.saturating_mul(device::dispatch_count(&s.plan) as u64) > MAX_DISPATCHES as u64 {
+            return Err("session step iteration limit".into());
+        }
         match &mut s.state {
             State::Cpu(c) => {
                 cpu_step(&s.plan, c, iterations)?;
@@ -765,7 +772,7 @@ impl Engine {
         let list_constants=p.inputs.values().chain(p.steps.iter().flat_map(|s|s.args.iter())).filter(|r|!r.step&&r.ty["kind"]=="list").map(|r|r.index).collect::<std::collections::BTreeSet<_>>();
         let inputs=p.constants.iter().enumerate().map(|(i,c)|json!({"list":list_constants.contains(&i),"count":c.count,"bytes":c.words.len()*4})).collect::<Vec<_>>();
         let outputs=p.outputs.iter().map(|i|p.steps[*i].count.unwrap_or(0)).collect::<Vec<_>>();
-        let stages=p.steps.iter().map(|s|json!({"dispatches":if graph_mode{s.f["graph"]["nodes"].as_array().map_or(0,Vec::len)}else{usize::from(s.count.unwrap_or(0)>0)}})).collect::<Vec<_>>();
+        let stages=p.steps.iter().map(|s|json!({"dispatches":if graph_mode{s.f["graph"]["nodes"].as_array().map_or(0,|nodes|nodes.iter().map(|n|n["schedule"]["passes"].as_array().map_or(1,Vec::len)).sum::<usize>())}else{usize::from(s.count.unwrap_or(0)>0)}})).collect::<Vec<_>>();
         let features=ink_abi::selection::features(&json!({"inputs":inputs,"outputs":outputs,"stages":stages,"iterations":p.iterations}))?;
         let decision=ink_abi::selection::decide(&self.selection_options,&json!({"scope":scope,"boundary":"captured-owned","features":features}),&["cpu".into(),"gpu".into()])?;
         if backend==Backend::Auto && decision["backend"]=="cpu"{let mut r=cpu(&p)?;r["backend"]=json!("cpu");r["reason"]=decision["reason"].clone();r["profile"]=decision;return Ok(r);}

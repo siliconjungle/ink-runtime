@@ -1,6 +1,6 @@
 import {width,pack,unpack} from "./ink-abi.mjs";
 import * as deviceLowering from "./ink-device.mjs";
-const {createDevice,fieldPath,reducible,decodeComponents,combineWords,lanes} = deviceLowering;
+const {createDevice,dispatchCount,fieldPath,reducible,decodeComponents,combineWords,lanes} = deviceLowering;
 import {createSelector,profileScope,workloadFeatures} from "./backend-selection.mjs";
 import {pipelineScope,segmentOutputs,segmentContexts,placementBackends} from './pipeline-contract.mjs';
 import {createPackedCall} from "./prepared-wasm.mjs";
@@ -112,6 +112,8 @@ function compilePlan(plan, functions, native = false) {
   outputs = outputs.slice();
   const feedback = new Map();
   const graphExecution=steps.some(s=>s.f.graph_required);
+  if(iterations*dispatchCount({steps})>MAX_DISPATCHES)
+    fail("pipeline iteration/dispatch limit");
   if(graphExecution && steps.some(s=>!s.f.graph))
     reason ??= "mixed GPU graph requires a graph descriptor for every function";
   for (const [input, id] of Object.entries(plan.feedback ?? {})) {
@@ -470,7 +472,7 @@ export async function loadInk(
     if(backend === 'gpu' && p.reason){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:p.reason};}
     const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
     const graphMode=p.steps.some(s=>s.f.graph_required);
-    const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:graphMode?s.f.graph.nodes.length:(s.count?1:0)})),iterations:p.iterations});
+    const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:dispatchCount({steps:[{...s,f:{...s.f,graph_required:graphMode}}]})})),iterations:p.iterations});
     const key=scope;
 
     const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
@@ -592,7 +594,7 @@ export async function loadInk(
         // and may still be executing when this resolves (see finish).
         step:(iterations=1)=>serial(async()=>{
           guard();
-          if(!Number.isInteger(iterations)||iterations<1||iterations>MAX_ITERATIONS||iterations*p.steps.length>MAX_DISPATCHES)fail('session step iteration limit');
+          if(!Number.isInteger(iterations)||iterations<1||iterations>MAX_ITERATIONS||iterations*dispatchCount(p)>MAX_DISPATCHES)fail('session step iteration limit');
           if(state.cpu){cpuStep(p,state.cpu,iterations);return {iteration:state.cpu.iteration,backend:'cpu',counters:{dispatches:0}};}
           const {iteration,...counters}=await adapter.advance(state.gpu,p,iterations);
           return {iteration,backend:'gpu',counters};
