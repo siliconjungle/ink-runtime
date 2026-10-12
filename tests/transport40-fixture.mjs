@@ -14,7 +14,7 @@ export async function transportFixture(run,{host=new URL('../hosts/ink-compute.m
  await copySharedHostAssets(dir);
  await copyFile(host,join(dir,'ink-compute.mjs'));
  for(const name of ['backend-selection.mjs','prepared-wasm.mjs','pipeline-contract.mjs'])await copyFile(new URL('../hosts/'+name,import.meta.url),join(dir,name));
- await writeFile(join(dir,'ink-device.mjs'),'export const createDevice=()=>({close(){}});');
+ await writeFile(join(dir,'ink-device.mjs'),'export const dispatchCount=p=>p.steps.length;export const createDevice=()=>({close(){}});');
  await writeFile(join(dir,'program.mjs'),'const identity=x=>x;export const metadata={functions:[]};export const functions={words:identity,signed:identity,flags:identity,floats:identity,wide:identity,pair:identity,record:identity,scalar:identity,increment:xs=>Array.from(xs,x=>(x+1)>>>0)};export const functionsInto=Object.fromEntries(Object.entries(functions).map(([name,f])=>[name,(x,out)=>{const v=f(x);for(let i=0;i<v.length;i++)out[i]=v[i];return v.length}]));');
  const functions=names.map((name,index)=>{const t=types[index]??types[0];return {name,index,params:[{type:t}],result:t,shader:null}});
  const oldFetch=globalThis.fetch,oldInstantiate=WebAssembly.instantiate,oldSlice=Uint32Array.prototype.slice;

@@ -1,6 +1,6 @@
 import {width,pack,unpack} from "./ink-abi.mjs";
 import * as deviceLowering from "./ink-device.mjs";
-const {createDevice} = deviceLowering;
+const {createDevice,dispatchCount,fieldPath,reducible,decodeComponents,combineWords,lanes} = deviceLowering;
 import {createSelector,profileScope,workloadFeatures} from "./backend-selection.mjs";
 import {pipelineScope,segmentOutputs,segmentContexts,placementBackends} from './pipeline-contract.mjs';
 import {createPackedCall} from "./prepared-wasm.mjs";
@@ -8,7 +8,8 @@ import {createPackedCall} from "./prepared-wasm.mjs";
 // Packing is transport for Wasm/GPU, never the JavaScript execution representation.
 const MAX_BYTES = 256 * 1024 * 1024,
   MAX_STEPS = 64,
-  MAX_DISPATCHES = 65536;
+  MAX_ITERATIONS = 1_000_000,
+  MAX_DISPATCHES = 64 * 1024 * 1024;
 const fail = (s) => {
   throw Error(s);
 };
@@ -27,7 +28,7 @@ function compilePlan(plan, functions, native = false) {
   if (
     !Number.isInteger(iterations) ||
     iterations < 1 ||
-    iterations > 10000 ||
+    iterations > MAX_ITERATIONS ||
     iterations * plan.steps.length > MAX_DISPATCHES
   )
     fail("pipeline iteration/dispatch limit");
@@ -111,6 +112,8 @@ function compilePlan(plan, functions, native = false) {
   outputs = outputs.slice();
   const feedback = new Map();
   const graphExecution=steps.some(s=>s.f.graph_required);
+  if(iterations*dispatchCount({steps})>MAX_DISPATCHES)
+    fail("pipeline iteration/dispatch limit");
   if(graphExecution && steps.some(s=>!s.f.graph))
     reason ??= "mixed GPU graph requires a graph descriptor for every function";
   for (const [input, id] of Object.entries(plan.feedback ?? {})) {
@@ -168,7 +171,7 @@ function compilePlan(plan, functions, native = false) {
 }
 export async function loadInk(
   base,
-  { gpu = true, backend: defaultBackend = "auto", expectedCalls=32, policy="adaptive", staticBackend="cpu", costProfile=null, placementProfile=null, targetKey="", parallelism=0, workerTimeoutMs=30000 } = {},
+  { gpu = true, device = null, backend: defaultBackend = "auto", expectedCalls=32, policy="adaptive", staticBackend="cpu", costProfile=null, placementProfile=null, targetKey="", parallelism=0, workerTimeoutMs=30000 } = {},
 ) {
   const root = new URL(base, globalThis.location?.href ?? "http://localhost/");
   if (!root.pathname.endsWith("/")) root.pathname += "/";
@@ -216,7 +219,7 @@ export async function loadInk(
     try{workers=createWorkerPool(root,parallelism,{timeoutMs:workerTimeoutMs});}catch{return null}
     return workers;
   }
-  const adapter=createDevice({root, enabled:gpu, onLost:()=>{gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,MAX_BYTES});
+  const adapter=createDevice({root, enabled:gpu, device, onLost:()=>{gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,MAX_BYTES});
   function cpuCall(f, args, consume) {
     if(f.precondition && !cpuCall(f.precondition,args,data=>data.words[0]===1))fail('contract precondition failed');
     cpu.ink_compute_reset();
@@ -348,7 +351,7 @@ export async function loadInk(
   async function executePlaced(p, explicit) {
     const placement=explicit?null:await ensurePlacement();
     const available=['cpu','javascript'];
-    if(gpu&&!gpuFailed&&globalThis.navigator?.gpu)available.push('gpu');
+    if(gpu&&!gpuFailed&&(device||globalThis.navigator?.gpu))available.push('gpu');
     // Worker construction is lazy: saved profiles cannot justify setup work
     // unless a worker segment is actually selected.
     if(parallelism&&typeof Worker!=='undefined'&&(!workers||workers.available))available.push('cpu-worker','javascript-worker');
@@ -470,7 +473,7 @@ export async function loadInk(
     if(backend === 'gpu' && p.reason){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:p.reason};}
     const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
     const graphMode=p.steps.some(s=>s.f.graph_required);
-    const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:graphMode?s.f.graph.nodes.length:(s.count?1:0)})),iterations:p.iterations});
+    const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:dispatchCount({steps:[{...s,f:{...s.f,graph_required:graphMode}}]})})),iterations:p.iterations});
     const key=scope;
 
     const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
@@ -493,6 +496,133 @@ export async function loadInk(
       return Promise.reject(e);
     }
     return serial(() => execute(prepared, { ...options,backend:resolveBackend(options?.backend??defaultBackend) }));
+  }
+
+  // Host twin of a resident GPU session, with identical semantics: values
+  // stay packed, feedback replaces inputs, and reads decode only what is
+  // asked for.
+  function cpuOpen(p) {
+    return {inputs:new Map([...p.inputs].map(([name,ref])=>[name,p.constants[ref.index]])),values:p.steps.map(()=>null),iteration:0};
+  }
+  function cpuStep(p, s, iterations) {
+    for(let k=0;k<iterations;k++) {
+      for(let i=0;i<p.steps.length;i++) {
+        const step=p.steps[i];
+        const args=step.args.map(a=>a.input?s.inputs.get(a.input):a.kind==='step'?s.values[a.index]:p.constants[a.index]);
+        s.values[i]=cpuCall(step.f,args,(data,borrowed)=>borrowed?{...data,words:data.words.slice()}:data);
+      }
+      for(const [name,i] of p.feedback)s.inputs.set(name,s.values[i]);
+      s.iteration++;
+    }
+  }
+  // Element-wise sessions keep every input length; graph sessions accept
+  // list lengths up to the opened capacity.
+  function checkWrite(p, input, d) {
+    const r=p.inputs.get(input);if(!r)fail('unknown pipeline input');
+    if(p.steps.some(s=>s.f.graph_required)){if(d.count>r.count||(r.type.kind!=='list'&&d.count!==1))fail('written input exceeds the session capacity');}
+    else if(d.count!==r.count)fail('steps sessions keep input shapes; reopen to change a length');
+  }
+  function cpuWrite(p, s, input, d) {
+    checkWrite(p,input,d);
+    if(p.feedback.has(input)&&s.iteration>0)s.values[p.feedback.get(input)]=d;
+    s.inputs.set(input,d);
+    return {counters:{upload_bytes:d.words.byteLength}};
+  }
+  function cpuRead(p, s, q) {
+    if(!s.iteration)fail('session has not run an iteration');
+    const index=id=>{if(typeof id!=='string')fail('read requires a step id');const i=p.ids.get(id);if(i===undefined)fail('unknown step');return i;};
+    if(q?.outputs!==undefined) {
+      if(!Array.isArray(q.outputs))fail('outputs must be an array');
+      return {values:Object.fromEntries(q.outputs.map(id=>{const i=index(id);return [p.steps[i].id,unpack(s.values[i].words,p.steps[i].f.result)];})),counters:{readback_bytes:0}};
+    }
+    const i=index(q?.step),d=s.values[i],type=p.steps[i].f.result,list=type.kind==='list';
+    const element=list?type.element:type,w=width(element),n=d.count;
+    if(q.length===true)return {length:n,counters:{readback_bytes:0}};
+    if(q.slice!==undefined) {
+      if(!Array.isArray(q.slice)||q.slice.length!==2)fail('slice must be [start, count]');
+      if(!q.slice.every(x=>Number.isSafeInteger(x)&&x>=0))fail('slice bounds must be naturals');
+      if(!list)fail('slice requires a list value');
+      const start=Math.min(q.slice[0],n),take=Math.min(q.slice[1],n-start);
+      return {value:unpack(d.words.subarray(start*w,(start+take)*w),type),length:n,start,counters:{readback_bytes:0}};
+    }
+    if(typeof q.reduce==='string') {
+      const {offset,type:field}=fieldPath(element,q.field,width),{kind,components}=reducible(field),l=lanes(kind);
+      const reduce=op=>{
+        const acc=Array.from({length:components},()=>null);
+        for(let e=0;e<n;e++)for(let c=0;c<components;c++){const at=e*w+offset+c*l,v=Array.from(d.words.subarray(at,at+l));acc[c]=acc[c]===null?v:combineWords(kind,op,acc[c],v);}
+        if(n===0&&op!=='sum')return null;
+        return decodeComponents(kind,components,acc.flatMap(a=>a??Array(l).fill(0)));
+      };
+      const value=['sum','min','max'].includes(q.reduce)?reduce(q.reduce):q.reduce==='bounds'?{min:reduce('min'),max:reduce('max')}:fail('reduce must be sum, min, max or bounds');
+      return {value,length:n,counters:{readback_bytes:0}};
+    }
+    fail('read requires outputs, length, slice or reduce');
+  }
+  // Open a resident session: inputs are uploaded once and every buffer stays
+  // on the device across step, read and write calls. No iteration runs until
+  // step. When the GPU cannot run the plan, the session runs on the compiled
+  // CPU with the same semantics.
+  function openSession(plan, {backend='auto'}={}) {
+    let p;
+    try {
+      if(closed)fail('Ink runtime is closed');
+      if(!['auto','gpu','gpu-required','cpu'].includes(backend))fail('sessions run on auto, gpu, gpu-required or cpu');
+      p=compilePlan(plan,functions,false);
+      if(backend==='gpu-required'&&p.reason)fail(p.reason);
+    } catch(error){return Promise.reject(error);}
+    return serial(async()=>{
+      if(closed)fail('Ink runtime is closed');
+      let state=null,reason;
+      if(backend==='cpu'||p.reason)reason=backend==='cpu'?'explicit CPU selection':p.reason;
+      else if(!gpu||gpuFailed){if(backend==='gpu-required')fail('GPU unavailable');reason='GPU unavailable';}
+      else try {
+        await adapter.prepare(p);gpuWarm=true;
+        state={gpu:await adapter.open(p)};reason='resident GPU session';
+      } catch(error) {
+        if(backend==='gpu-required')throw error;
+        if(!/limit|budget|shape|non-finite/i.test(String(error)))gpuFailed=true;
+        reason=`GPU fallback: ${error.message??error}`;
+      }
+      if(!state){await ensureCpu();state={cpu:cpuOpen(p)};}
+      let ended=false;
+      const name=state.gpu?'gpu':'cpu';
+      const guard=()=>{if(closed)fail('Ink runtime is closed');if(ended)fail('session closed');};
+      const session={
+        backend:name,reason,
+        counters:{upload_bytes:state.gpu?state.gpu.A.upload:0},
+        get iteration(){return state.gpu?.iteration??state.cpu?.iteration??0;},
+        // Run more iterations. Nothing is read back; GPU work is submitted
+        // and may still be executing when this resolves (see finish).
+        step:(iterations=1)=>serial(async()=>{
+          guard();
+          if(!Number.isInteger(iterations)||iterations<1||iterations>MAX_ITERATIONS||iterations*dispatchCount(p)>MAX_DISPATCHES)fail('session step iteration limit');
+          if(state.cpu){cpuStep(p,state.cpu,iterations);return {iteration:state.cpu.iteration,backend:'cpu',counters:{dispatches:0}};}
+          const {iteration,...counters}=await adapter.advance(state.gpu,p,iterations);
+          return {iteration,backend:'gpu',counters};
+        }),
+        // {outputs:[ids]} | {step,length:true} | {step,slice:[start,count]} |
+        // {step,reduce:'sum'|'min'|'max'|'bounds',field:'a.b'}. Reductions
+        // run on the device and return a few words.
+        read:request=>serial(async()=>{guard();return state.cpu?cpuRead(p,state.cpu,request):adapter.read(state.gpu,p,request);}),
+        // Replace a named input for the next iteration. A fed-back input's
+        // carried value is its step's last output, which this replaces.
+        write:(input,value)=>serial(async()=>{
+          guard();
+          const r=p.inputs.get(input);if(!r)fail('unknown pipeline input');
+          const d=pack(value,r.type);
+          if(state.cpu)return cpuWrite(p,state.cpu,input,d);
+          checkWrite(p,input,d);return adapter.write(state.gpu,p,input,d);
+        }),
+        // The GPU buffer holding a step's current value, for zero-copy use by
+        // a renderer on the same device (pass `device` to loadInk). Valid
+        // until the next step, write or close of this session.
+        buffer:id=>{guard();if(!state.gpu)fail(`session runs on CPU: ${reason}`);const i=p.ids.get(id);if(i===undefined)fail('unknown step');return adapter.view(state.gpu,p,i);},
+        // Wait for submitted GPU work (measurement only; reads also wait).
+        finish:()=>serial(async()=>{guard();if(state.gpu)await adapter.finish();}),
+        close:()=>serial(()=>{if(ended)return;ended=true;if(state.gpu)adapter.closeSession(state.gpu);state.cpu=null;}),
+      };
+      return session;
+    });
   }
   const runtime = {
     manifest,
@@ -543,6 +673,10 @@ export async function loadInk(
       });
     },
     pipeline: submit,
+    open: openSession,
+    // The engine's GPU device once GPU execution has started (or the device
+    // supplied to loadInk), for renderers sharing session buffers.
+    gpuDevice: () => adapter.handle(),
     call: (name, args, options) => {
       const backend=resolveBackend(options?.backend ?? defaultBackend);
       if(backend === 'cpu') {
