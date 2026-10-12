@@ -176,7 +176,7 @@ fn emit_checked(
     for (i, f) in p.functions.iter().enumerate() {
         let sub = closure(p, &f.name)?;
         let folder = format!("gpu/f{i}");
-        let result = super::assemble(&sub, &dir.join(&folder), None);
+        let result = super::assemble(&sub, &dir.join(&folder), None, None);
         if result.is_ok() {
             super::put(&dir.join(&folder), "core.json", sub.bytes()?)?;
         }

@@ -46,22 +46,29 @@ pub fn emit_selected(
     selected: &ink_core::optimisation::CheckedSelection,
     dir: &Path,
 ) -> LangResult<()> {
-    match assemble(selected.module(), dir, None) {
+    match assemble(selected.module(), dir, None, None) {
         Ok(()) => Ok(()),
         Err(_) => module::emit_selected(selected, dir),
     }
 }
 pub fn emit_gpu(p: &Program, dir: &Path) -> LangResult<()> {
     let checked = core::CheckedModule::from_source(p.clone())?;
-    match assemble(&checked, dir, None) {
+    match assemble(&checked, dir, None, None) {
         Ok(()) => Ok(()),
         Err(_) => module::emit(&checked, dir),
     }
 }
 pub fn emit_planned(plan:&ink_core::planning::CheckedPlan,dir:&Path)->LangResult<()> {
-    match assemble(plan.module(),dir,None){Ok(())=>Ok(()),Err(_)=>module::emit_planned(plan,dir)}
+    match assemble(plan.module(),dir,None,plan.resources()){Ok(())=>Ok(()),Err(_)=>module::emit_planned(plan,dir)}
+}
+pub fn emit_routed_planned(plan: &ink_core::planning::CheckedPlan, dir: &Path) -> LangResult<()> {
+    routed(plan.route().ok_or("resource emission requires a route")?, dir, plan.resources())
 }
 pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path) -> LangResult<()> {
+    routed(route, dir, None)
+}
+fn routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path,
+    resources: Option<&ink_core::resources::CheckedResources>) -> LangResult<()> {
     let component;
     let route=if route.module().pure_program().is_err() {
         component=route.pure_component()?;&component
@@ -77,12 +84,13 @@ pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path)
             return Err("mixed runtime supports c/cpu and gpu/gpu placements".into());
         }
     }
-    assemble(route.module(), dir, Some(route))
+    assemble(route.module(), dir, Some(route), resources)
 }
 fn assemble(
     checked: &core::CheckedModule,
     dir: &Path,
     route: Option<&ink_core::source_routing::CheckedRouting>,
+    resources: Option<&ink_core::resources::CheckedResources>,
 ) -> LangResult<()> {
     let p = checked.pure_program()?;
     let compute = uses_packed_compute(p);
@@ -138,6 +146,7 @@ fn assemble(
         put(dir, "pipeline-workers.mjs", include_str!("../hosts/pipeline-workers.mjs"))?;
         put(dir, "pipeline-worker.mjs", include_str!("../hosts/pipeline-worker.mjs"))?;
     }
+    put(dir, "usage-profile.mjs", include_str!("../hosts/usage-profile.mjs"))?;
     put(dir, "ink-selection.mjs", ink_abi::SELECTION_JS_SOURCE)?;
     put(dir, "ink-selection.wasm", ink_abi::SELECTION_WASM)?;
     put(dir, "ink-abi.mjs", ink_abi::PACKED_JS_SOURCE)?;
@@ -213,6 +222,7 @@ fn assemble(
             include_str!("../hosts/native/scalar-main.rs")
         },
     )?;
+    let resources_json = resources.map(|r| serde_json::to_string(r.plan()).map_err(|e|e.to_string())).transpose()?;
     let route_json = route
         .map(|r| serde_json::to_string(r.package()).map_err(|e| e.to_string()))
         .transpose()?;
@@ -222,7 +232,8 @@ fn assemble(
             dir,
             "ink-route.mjs",
             format!(
-                "const ROUTE={s};\n{}",
+                "const ROUTE={s};\nconst RESOURCES={};\n{}",
+                resources_json.as_deref().unwrap_or("null"),
                 include_str!("../hosts/ink-route.mjs")
             ),
         )?;
@@ -242,6 +253,7 @@ fn assemble(
         put(dir, &n, s)?;
     }
     assets.push_str("];\n");
+    assets.push_str(&format!("pub const SOURCE_RESOURCES:Option<&str>={};\n", resources_json.as_ref().map(|s|format!("Some({s:?})")).unwrap_or("None".into())));
     assets.push_str(&match route_json {
         Some(s) => format!("pub const SOURCE_ROUTE:Option<&str>=Some({s:?});\n"),
         None => "pub const SOURCE_ROUTE:Option<&str>=None;\n".into(),
@@ -369,4 +381,17 @@ pub fn install_pipeline_planner(dir: &Path, javascript: &str) -> LangResult<()> 
         put(dir, "native/src/assets.rs", format!("pub const MANIFEST:&str={encoded:?};\n{remaining}"))?;
     }
     Ok(())
+}
+
+/// Bind runtime recordings to the original source identity across checked rewrites.
+/// The manifest still binds execution to its selected module; this separate field
+/// is only cohort provenance and grants no semantic authority.
+pub fn install_usage_identity(dir: &Path, original: &str) -> LangResult<()> {
+    let mut manifest: serde_json::Value=serde_json::from_slice(&fs::read(dir.join("manifest.json")).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    manifest["usage_core_sha256"]=json!(original);
+    let encoded=serde_json::to_string_pretty(&manifest).map_err(|e|e.to_string())?;
+    put(dir,"manifest.json",&encoded)?;
+    let assets=fs::read_to_string(dir.join("native/src/assets.rs")).map_err(|e|e.to_string())?;
+    let (_,remaining)=assets.split_once('\n').ok_or("invalid native asset header")?;
+    put(dir,"native/src/assets.rs",format!("pub const MANIFEST:&str={encoded:?};\n{remaining}"))
 }
