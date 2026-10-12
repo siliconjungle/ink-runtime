@@ -163,3 +163,8 @@ Source-bound representation codecs also transport supported List values through
 Nil/Cons datatypes, preserving nested element types and enforcing depth/length
 limits. Native definition execution retains its separate resource limits.
 See the Ink distribution docs/point-query-delta.md for tested domains and bounds.
+
+## License
+
+Project code and documentation are [MIT licensed](LICENSE). Third-party dependencies,
+vendored projects and research data retain their own licenses and notices.
