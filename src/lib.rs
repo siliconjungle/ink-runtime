@@ -59,9 +59,11 @@ pub fn emit_gpu(p: &Program, dir: &Path) -> LangResult<()> {
     }
 }
 pub fn emit_planned(plan:&ink_core::planning::CheckedPlan,dir:&Path)->LangResult<()> {
+    plan.require_source_storage_capability(false,false)?;
     match assemble(plan.module(),dir,None,plan.resources()){Ok(())=>Ok(()),Err(_)=>module::emit_planned(plan,dir)}
 }
 pub fn emit_routed_planned(plan: &ink_core::planning::CheckedPlan, dir: &Path) -> LangResult<()> {
+    plan.require_source_storage_capability(false,false)?;
     routed(plan.route().ok_or("resource emission requires a route")?, dir, plan.resources())
 }
 pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path) -> LangResult<()> {
