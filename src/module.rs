@@ -109,6 +109,12 @@ fn closure(p: &Program, name: &str) -> LangResult<CheckedModule> {
     // The complete module was checked before extracting this literal closure.
     // Internal calls already have checked caller obligations.
     sub.contracts=Default::default();
+    if p.termination.measures.keys().any(|name| names.contains(name)) {
+        return Err("authored recursive measures execute on the complete CPU host".into());
+    }
+    // This closure contains none of the measured definitions. Their exact-source
+    // evidence is inapplicable to a different module and grants no device scope.
+    sub.termination=Default::default();
     CheckedModule::from_source(sub)
 }
 fn symbols(source: &str, prefix: &str) -> String {
