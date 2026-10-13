@@ -155,6 +155,8 @@ pub fn emit_selected(
     emit_checked(selected.module(), Some(selected),None, dir)
 }
 pub fn emit_planned(plan:&ink_core::planning::CheckedPlan,dir:&Path)->LangResult<()> {
+    plan.require_record_elision_capability(false)?;
+    plan.require_source_storage_capability(false,false)?;
     emit_checked(plan.module(),None,Some(plan),dir)
 }
 fn emit_checked(

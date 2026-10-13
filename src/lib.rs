@@ -59,9 +59,13 @@ pub fn emit_gpu(p: &Program, dir: &Path) -> LangResult<()> {
     }
 }
 pub fn emit_planned(plan:&ink_core::planning::CheckedPlan,dir:&Path)->LangResult<()> {
+    plan.require_record_elision_capability(false)?;
+    plan.require_source_storage_capability(false,false)?;
     match assemble(plan.module(),dir,None,plan.resources()){Ok(())=>Ok(()),Err(_)=>module::emit_planned(plan,dir)}
 }
 pub fn emit_routed_planned(plan: &ink_core::planning::CheckedPlan, dir: &Path) -> LangResult<()> {
+    plan.require_record_elision_capability(false)?;
+    plan.require_source_storage_capability(false,false)?;
     routed(plan.route().ok_or("resource emission requires a route")?, dir, plan.resources())
 }
 pub fn emit_routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path) -> LangResult<()> {
@@ -338,13 +342,14 @@ fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> 
     runtime.push_str("\n}\nuse temporary::{OwnedBuffer,OwnedMap};\n");
     runtime.push_str(ink_abi::VALUE_KIND_RUST_SOURCE);
     runtime.push_str(ink_native_support::DYNAMIC_VALUES_RUST_SOURCE);
+    runtime.push_str(ink_native_support::NUMERIC_INT_RUST_SOURCE);
     runtime.push_str("\nmod value_wire {\n");
     runtime.push_str(ink_abi::VALUE_WIRE_RUST_SOURCE);
     runtime.push_str("\n}\npub use value_wire::Limits as ValueWireLimits;\n");
     runtime.push_str("pub const INK_WIRE_CONTRACT:&str=include_str!(\"wire.json\");\n");
     put(dir,"src/wire.json",emission.metadata["wire"].to_string())?;
     runtime.push_str(ink_native_support::BINARY_VALUES_RUST_SOURCE);
-    runtime.push_str("impl State{fn binary_call_value(&mut self,name:&str,args:&Json)->Result<Json,String>{self.call_json(name,args)}}\n");
+    runtime.push_str(ink_native_support::DYNAMIC_BINARY_RUST_SOURCE);
 
     runtime.push_str(STATE_WASM_ABI);
     runtime.push_str(ink_native_support::BINARY_EXPORTS_RUST_SOURCE);
