@@ -65,7 +65,7 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-abi?rev=1702a339c6dbb4d60afd69e48208adc44dab6887#1702a339c6dbb4d60afd69e48208adc44dab6887"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=972229604ac4787fc47e02f56831f614d7d42eaa#972229604ac4787fc47e02f56831f614d7d42eaa"
 dependencies = [
  "serde",
  "serde_json",
@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=d8fff05c333d08b6fcb558ffc39cbc9d7a7f8c6e#d8fff05c333d08b6fcb558ffc39cbc9d7a7f8c6e"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=10f9a549c6e99e477d81e747f5926e21c709edfa#10f9a549c6e99e477d81e747f5926e21c709edfa"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -98,7 +98,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=9f88323078ee97e53b5c4df0397fc5ccd845e56d#9f88323078ee97e53b5c4df0397fc5ccd845e56d"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=6e0f261b88eee4f3d971da95916e036c849e29aa#6e0f261b88eee4f3d971da95916e036c849e29aa"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -111,7 +111,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=c9ea25ced407ae36d0dae233a545139c1ef8ca5a#c9ea25ced407ae36d0dae233a545139c1ef8ca5a"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=a254a8e132dbc0f5580f3736a28839860e6247a0#a254a8e132dbc0f5580f3736a28839860e6247a0"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -136,7 +136,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=0c1c3739dfa3c8f0b0253d197cfdc895aa2e8f5a#0c1c3739dfa3c8f0b0253d197cfdc895aa2e8f5a"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=004389520708b23a7d36e4773312875b372b0f88#004389520708b23a7d36e4773312875b372b0f88"
 dependencies = [
  "ink-abi",
  "ink-core",
