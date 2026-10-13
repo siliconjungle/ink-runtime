@@ -168,3 +168,11 @@ See the Ink distribution docs/point-query-delta.md for tested domains and bounds
 
 Project code and documentation are [MIT licensed](LICENSE). Third-party dependencies,
 vendored projects and research data retain their own licenses and notices.
+
+Ordinary C/Rust packages include schema-bound portable value entrypoints and an
+optional raw binary C/Wasm export. `StateInstance.pureBinary(index,bytes)` calls
+that extension without a JSON envelope. Sorted supported signature names define
+indices; schema identity and bounded codec checks establish value compatibility.
+Actions retain their checked transaction interfaces. Wasm input/output currently
+copy across instance memory, and compiled calls materialize target values. No
+network protocol or profitability rule is introduced by this transport support.

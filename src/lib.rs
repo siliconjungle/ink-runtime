@@ -338,7 +338,16 @@ fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> 
     runtime.push_str("\n}\nuse temporary::{OwnedBuffer,OwnedMap};\n");
     runtime.push_str(ink_abi::VALUE_KIND_RUST_SOURCE);
     runtime.push_str(ink_native_support::DYNAMIC_VALUES_RUST_SOURCE);
+    runtime.push_str("\nmod value_wire {\n");
+    runtime.push_str(ink_abi::VALUE_WIRE_RUST_SOURCE);
+    runtime.push_str("\n}\npub use value_wire::Limits as ValueWireLimits;\n");
+    runtime.push_str("pub const INK_WIRE_CONTRACT:&str=include_str!(\"wire.json\");\n");
+    put(dir,"src/wire.json",emission.metadata["wire"].to_string())?;
+    runtime.push_str(ink_native_support::BINARY_VALUES_RUST_SOURCE);
+    runtime.push_str("impl State{fn binary_call_value(&mut self,name:&str,args:&Json)->Result<Json,String>{self.call_json(name,args)}}\n");
+
     runtime.push_str(STATE_WASM_ABI);
+    runtime.push_str(ink_native_support::BINARY_EXPORTS_RUST_SOURCE);
     runtime.push_str(NATIVE_STATE_ADAPTER);
     emit_native_state_host(dir)?;
     put(dir, "src/lib.rs", runtime)?;
@@ -354,6 +363,7 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
     let mut code = code.to_owned();
     code.push_str(STATE_WASM_ABI);
+    if code.contains("pub const INK_WIRE_CONTRACT:"){code.push_str(ink_native_support::BINARY_EXPORTS_RUST_SOURCE);}
     code.push_str(NATIVE_STATE_ADAPTER);
     emit_native_state_host(dir)?;
     put(dir, "src/lib.rs", code)?;

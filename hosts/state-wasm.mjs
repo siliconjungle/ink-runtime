@@ -194,6 +194,13 @@ export class StateInstance {
     const input=m.input(bytes);
     try{return m.response(m.call('lang_invoke',this.handle,input)>>>0);}finally{m.release(input);}
   }
+  pureBinary(functionIndex,bytes){
+    this.live();const m=this.module;
+    if(typeof m.exports.lang_call_binary!=='function')throw new AbiError('Binary value extension unavailable');
+    if(!Number.isInteger(functionIndex)||functionIndex<0||functionIndex>4294967295)throw new RangeError('Invalid binary function index');
+    const input=m.input(bytes);
+    try{return m.take(m.call('lang_call_binary',this.handle,functionIndex,input)>>>0);}finally{m.release(input);}
+  }
   beginTransaction(){this.live();if(this.transaction)throw new AbiError('State transaction already in progress');if(typeof this.module.exports.lang_transaction_begin!=='function')return false;const code=this.module.call('lang_transaction_begin',this.handle);if(code===2)return false;if(code!==1)throw this.module.error();this.transaction=true;return true;}
   commitTransaction(){this.live();if(!this.transaction)throw new AbiError('No state transaction');if(this.module.call('lang_transaction_commit',this.handle)!==1)throw this.module.error();this.transaction=false;}
   rollbackTransaction(){this.live();if(!this.transaction)throw new AbiError('No state transaction');if(this.module.call('lang_transaction_rollback',this.handle)!==1)throw this.module.error();this.transaction=false;}
