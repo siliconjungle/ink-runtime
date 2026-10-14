@@ -51,3 +51,6 @@ test('required GPU execution never invokes a CPU fallback',async()=>{
  assert.equal(calls,0);
  assert.equal((await selector.run('working',[cpu,{name:'gpu',run:()=>7}],'gpu-required')).backend,'gpu');
 });
+
+// Adaptive state uses the same native/Wasm decision boundary.
+import './adaptive-state.mjs';
