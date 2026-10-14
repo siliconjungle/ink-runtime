@@ -86,3 +86,8 @@ test('independent collections switch locally and keep unrelated snapshots untouc
  assert.equal(cold.created.length,1);assert.deepEqual(await group.checkpoint('cold'),before);assert.throws(()=>group.call('absent','read'),/unknown collection/);await group.close();
 });
 await import('./usage-window.mjs');
+test('collection construction cleans up prior hosts if a later binding is invalid',async()=>{
+ const {createAdaptiveCollections}=await import('../hosts/adaptive-collections.mjs');
+ const first=fixture(),bad=fixture();bad.profile=structuredClone(bad.profile);bad.profile.binding.compiler='f'.repeat(64);
+ await assert.rejects(createAdaptiveCollections({first,bad}),/binding/);assert.ok(first.created.every(x=>x.disposed));assert.equal(bad.created.length,0);
+});

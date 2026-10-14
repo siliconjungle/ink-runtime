@@ -84,6 +84,13 @@ impl Recorder {
         }
         Ok(self.recent.back())
     }
+    pub fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({"total_calls":self.total,"partial_calls":self.calls,
+            "windows":self.recent.iter().map(|w|serde_json::json!({
+                "summary":w.summary,"operation_mix_drift":w.operation_mix_drift,
+                "calls":w.calls,"total_calls":w.total_calls,"sample_every":w.sample_every
+            })).collect::<Vec<_>>()})
+    }
     pub fn recent(&self) -> &VecDeque<Window> {
         &self.recent
     }

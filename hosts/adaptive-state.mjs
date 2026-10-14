@@ -39,7 +39,7 @@ export async function createAdaptiveState({binding,profile,variants,baseline,pol
  let live=await variants[current].create(),tail=Promise.resolve(),pending=0,capturedBytes=0,closed=false,disabled=!enabled;
  let bindings=new Map();
  const recorder=recording===false?null:createAdaptiveRecorder({...recording,clock});
- const usageRecorder=usage===null?null:createUsageWindow(usage);
+ let usageRecorder=usage===null?null:createUsageWindow(usage);
  const emit=event=>{try{onDiagnostic(structuredClone(event));}catch{}};
  const time=()=>{try{const n=clock();return Number.isFinite(n)?n:null;}catch{return null;}};
  async function dispose(value){try{await value?.dispose?.();}catch(e){emit({kind:'dispose-failed',error:String(e)});}}
@@ -99,7 +99,7 @@ export async function createAdaptiveState({binding,profile,variants,baseline,pol
     const stamp=recorder?.start();let result,error,failed=false;
     try{if(!bindings.has(name)){if(bindings.size>=64)bindings.delete(bindings.keys().next().value);bindings.set(name,live.bind(name));}result=await bindings.get(name)(...owned.value);}catch(e){failed=true;error=e;}
     let window=null;try{window=recorder?.finish('action:'+name,meta.shape??'unknown',stamp,{failed,state_elements:meta.state_elements??0});}catch{}
-    if(usageRecorder){try{const flush=usageRecorder.observe(meta.usage,failed);const stats=flush?await flush:null;if(stats)emit({kind:'usage-window',...stats});}catch(error){emit({kind:'usage-failed',error:String(error)});}}
+    if(usageRecorder){try{const flush=usageRecorder.observe(meta.usage,failed);const stats=flush?await flush:null;if(stats)emit({kind:'usage-window',...stats});}catch(error){usageRecorder=null;emit({kind:'usage-failed',error:String(error)});}}
     await consider(window);
     if(failed)throw error;return result;
    },owned.bytes);
