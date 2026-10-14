@@ -6,7 +6,7 @@ publish = false
 [dependencies]
 num-bigint = "=0.4.8"
 sha2 = "=0.10.9"
-ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "b794d162b3e3770640d96516f9b640c11448cfbe" }
+ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "5c74c999f0852fe9f582311401f0d51905044356" }
 wgpu = "=30.0.1"
 pollster = "0.4"
 serde_json = { version = "1", features = ["float_roundtrip"] }
