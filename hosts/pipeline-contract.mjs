@@ -3,7 +3,7 @@
 export const placementBackends = ['cpu','javascript','gpu','cpu-worker','javascript-worker'];
 const width = t => t.kind === 'list' ? width(t.element) : t.kind === 'vector' ? t.size*width(t.element) : t.kind === 'record' ? t.fields.reduce((n,f)=>n+width(f.type),0) : t.kind === 'u64' ? 2 : 1;
 export function pipelineScope(manifest,p) {
-  return JSON.stringify(['ink-pipeline-placement-v1',manifest.core_sha256,manifest.cpu_c_sha256,manifest.javascript_sha256,manifest.shaders,manifest.runtime_host_sha256,manifest.pipeline_planner_sha256,
+  return JSON.stringify(['ink-pipeline-placement-v1',manifest.core_sha256,manifest.cpu_rust_sha256,manifest.javascript_sha256,manifest.shaders,manifest.runtime_host_sha256,manifest.pipeline_planner_sha256,
     p.constants.map(c=>c.type),p.steps.map(s=>[s.f.name,s.args.map(a=>a.input?['i',a.input]:[a.kind,a.index])]),
     p.outputs,[...p.feedback],p.iterations]);
 }

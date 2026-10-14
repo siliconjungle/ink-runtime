@@ -114,13 +114,13 @@ closures from mixed programs and retains persistent device engines.
 The C header is `hosts/state-abi.h`; browser Wasm support is `hosts/state-wasm.mjs`.
 
 `hosts/durable-state.mjs` provides serialized durable calls and bounded retry
-receipts over generated JavaScript or the complete C/Rust Wasm ABI. Storage
+receipts over generated JavaScript or the complete Rust Wasm ABI. Storage
 adapters are Node's atomic synced file replacement (`durable-file.mjs`, one
 writer process) and IndexedDB (transactional compare-and-replace). Ordered
 outbox delivery is at least once; receivers deduplicate event coordinates.
 An uncertain write requires reopening before further execution.
 `durable::{CompiledState, Host, Store, FileStore}` supplies native embedding;
-complete C/Rust projects and mixed native wgpu bundles share this host/CLI and accept
+complete Rust projects and mixed native wgpu bundles share this host/CLI and accept
 `SCRIPT.json --durable FILE`. Native receipts and outbox acknowledgements survive
 process death after publication but before reply. Complete snapshots are copied
 per call; this is a durability baseline, not a performance claim. See the distribution's
@@ -169,7 +169,7 @@ See the Ink distribution docs/point-query-delta.md for tested domains and bounds
 Project code and documentation are [MIT licensed](LICENSE). Third-party dependencies,
 vendored projects and research data retain their own licenses and notices.
 
-Ordinary C/Rust packages include schema-bound portable value entrypoints and an
+Ordinary Rust packages include schema-bound portable value entrypoints and an
 optional raw binary C/Wasm export. `StateInstance.pureBinary(index,bytes)` calls
 that extension without a JSON envelope. Sorted supported signature names define
 indices; schema identity and bounded codec checks establish value compatibility.

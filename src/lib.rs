@@ -1,41 +1,18 @@
 //! Backend-neutral execution assembly, scheduling, saved-model decisions and fallback.
 use ink_core::{core, syntax::*, LangResult};
-use ink_lowering_c::native;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 fn put(dir: &Path, name: &str, bytes: impl AsRef<[u8]>) -> LangResult<()> {
     fs::write(dir.join(name), bytes).map_err(|e| e.to_string())
 }
-fn scalar_cpu(p: &Program) -> LangResult<String> {
-    let mut c = native::emit(p)?;
-    c.push_str("\nuint64_t ink_cpu_call(uint32_t function,const void *const *lists,const size_t *lengths,const uint64_t *scalars){\n(void)lists;(void)lengths;(void)scalars;\nswitch(function){\n");
-    for (index, f) in p.functions.iter().enumerate() {
-        let mut args = Vec::new();
-        for (i, (_, t)) in f.params.iter().enumerate() {
-            args.push(match t {
-                Type::List(inner) => format!(
-                    "(const {}*)lists[{i}], lengths[{i}]",
-                    if **inner == Type::U32 {
-                        "uint32_t"
-                    } else {
-                        "uint64_t"
-                    }
-                ),
-                Type::U32 => format!("(uint32_t)scalars[{i}]"),
-                Type::U64 => format!("scalars[{i}]"),
-                Type::Bool => format!("(bool)scalars[{i}]"),
-                _ => return Err("unsupported CPU ABI parameter".into()),
-            });
+fn remove_c_artifacts(dir:&Path)->LangResult<()>{
+    for name in ["cpu.c","native/cpu.c","native/build.rs","program.c","state-abi.h","zig-cc","zig-ar"]{
+        match fs::remove_file(dir.join(name)){
+            Ok(())=>(),Err(e)if e.kind()==std::io::ErrorKind::NotFound=>(),Err(e)=>return Err(e.to_string())
         }
-        c.push_str(&format!(
-            "case {index}:return (uint64_t)lang_fn_{}({});\n",
-            f.name,
-            args.join(",")
-        ));
     }
-    c.push_str("default:lang_fail();return 0;\n}\n}\n");
-    Ok(c)
+    Ok(())
 }
 /// Physical host ABI selection follows the GPU package's emitted capabilities.
 /// This does not change language semantics or select an optimisation law.
@@ -83,9 +60,9 @@ fn routed(route: &ink_core::source_routing::CheckedRouting, dir: &Path,
     for s in &route.package().stages {
         if !matches!(
             (s.backend.as_str(), s.domain.as_str()),
-            ("c", "cpu") | ("gpu", "gpu")
+            ("rust", "cpu") | ("gpu", "gpu")
         ) {
-            return Err("mixed runtime supports c/cpu and gpu/gpu placements".into());
+            return Err("mixed runtime supports rust/cpu and gpu/gpu placements".into());
         }
     }
     assemble(route.module(), dir, Some(route), resources)
@@ -96,13 +73,10 @@ fn assemble(
     route: Option<&ink_core::source_routing::CheckedRouting>,
     resources: Option<&ink_core::resources::CheckedResources>,
 ) -> LangResult<()> {
+    remove_c_artifacts(dir)?;
     let p = checked.pure_program()?;
     let compute = uses_packed_compute(p);
-    let c = if compute {
-        ink_lowering_c::compute::emit_c(p)?
-    } else {
-        scalar_cpu(p)?
-    };
+    let cpu = ink_lowering_rust::packed::lower(checked, compute)?;
     let javascript = ink_lowering_js::lower(checked)?;
     let mut emitted = ink_lowering_gpu::gpu::lower(checked)?;
     emitted.manifest["javascript"] = javascript.manifest.clone();
@@ -133,7 +107,7 @@ fn assemble(
             "prepared_instance":"exclusive"
         });
     }
-    emitted.manifest["cpu_c_sha256"] = json!(format!("{:x}", Sha256::digest(c.as_bytes())));
+    emitted.manifest["cpu_rust_sha256"] = json!(format!("{:x}", Sha256::digest(cpu.as_bytes())));
     emitted.manifest["runtime_abi"] = json!(if compute {
         "ink-packed-pipeline-v2"
     } else {
@@ -159,8 +133,8 @@ fn assemble(
         "backend-selection.mjs",
         include_str!("../hosts/backend-selection.mjs"),
     )?;
-    put(dir, "cpu.c", &c)?;
-    put(dir, "native/cpu.c", &c)?;
+    emit_packed_project(&cpu, &dir.join("cpu"))?;
+    put(dir, "native/src/cpu.rs", &cpu)?;
     put(
         dir,
         "ink-gpu.mjs",
@@ -188,11 +162,6 @@ fn assemble(
         dir,
         "native/Cargo.lock",
         include_str!("../hosts/native/Cargo.lock"),
-    )?;
-    put(
-        dir,
-        "native/build.rs",
-        include_str!("../hosts/native/build.rs"),
     )?;
     put(
         dir,
@@ -309,71 +278,10 @@ const NATIVE_STATE_CLI: &str = include_str!("../hosts/native/state-cli.rs");
 pub const STATE_RUNNER: &str = include_str!("../hosts/native/state-main.rs");
 pub const COMPLETE_STATE_RUNNER: &str = include_str!("../hosts/value-main.rs");
 
-/// Assemble a complete literal C program and its shared primitive runtime.
-/// C functions/branches/loops execute the program; Rust supplies exact values,
-/// storage and portable codecs through an explicit C ABI, without an evaluator.
-pub fn emit_c_program(module: &core::CheckedModule, dir: &Path) -> LangResult<()> {
-    emit_c_artifact(ink_lowering_c::complete::lower(module)?, dir)
-}
-pub fn emit_c_program_selected(
-    selected: &ink_core::optimisation::CheckedSelection,
-    dir: &Path,
-) -> LangResult<()> {
-    emit_c_artifact(ink_lowering_c::complete::lower_selected(selected)?, dir)
-}
-pub fn emit_c_program_planned(plan: &ink_core::planning::CheckedPlan, dir: &Path) -> LangResult<()> {
-    emit_c_artifact(ink_lowering_c::complete::lower_planned(plan)?,dir)
-}
-fn emit_c_artifact(emission: ink_lowering_c::complete::Emission, dir: &Path) -> LangResult<()> {
-    fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
-    put(dir, "program.c", emission.c)?;
-    put(dir, "state-abi.h", ink_abi::STATE_C_HEADER)?;
-    put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
-    emit_durable_hosts(dir)?;
-    put(
-        dir,
-        "manifest.json",
-        serde_json::to_vec_pretty(&emission.metadata).map_err(|e| e.to_string())?,
-    )?;
-    put(
-        dir,
-        "src/metadata.json",
-        serde_json::to_vec_pretty(&emission.metadata).map_err(|e| e.to_string())?,
-    )?;
-    let mut runtime = String::from("#![allow(dead_code)]\nmod portable {\n");
-    runtime.push_str(ink_core::SNAPSHOT_WIRE_RUST_SOURCE);
-    runtime.push_str("\n}\npub use portable::Limits as SnapshotLimits;\n");
-    runtime.push_str("mod transaction {\n");
-    runtime.push_str(ink_core::TRANSACTION_RUST_SOURCE);
-    runtime.push_str("\n}\n");
-    runtime.push_str("mod temporary {\n");
-    runtime.push_str(ink_native_support::OWNED_VALUES_RUST_SOURCE);
-    runtime.push_str("\n}\nuse temporary::{OwnedBuffer,OwnedMap};\n");
-    runtime.push_str(ink_abi::VALUE_KIND_RUST_SOURCE);
-    runtime.push_str(ink_native_support::DYNAMIC_VALUES_RUST_SOURCE);
-    runtime.push_str(ink_native_support::NUMERIC_INT_RUST_SOURCE);
-    runtime.push_str("\nmod value_wire {\n");
-    runtime.push_str(ink_abi::VALUE_WIRE_RUST_SOURCE);
-    runtime.push_str("\n}\npub use value_wire::Limits as ValueWireLimits;\n");
-    runtime.push_str("pub const INK_WIRE_CONTRACT:&str=include_str!(\"wire.json\");\n");
-    put(dir,"src/wire.json",emission.metadata["wire"].to_string())?;
-    runtime.push_str(ink_native_support::BINARY_VALUES_RUST_SOURCE);
-    runtime.push_str(ink_native_support::DYNAMIC_BINARY_RUST_SOURCE);
-
-    runtime.push_str(STATE_WASM_ABI);
-    runtime.push_str(ink_native_support::BINARY_EXPORTS_RUST_SOURCE);
-    runtime.push_str(NATIVE_STATE_ADAPTER);
-    emit_native_state_host(dir)?;
-    put(dir, "src/lib.rs", runtime)?;
-    put(dir, "src/main.rs", COMPLETE_STATE_RUNNER)?;
-    put(dir, "build.rs", include_str!("../hosts/value-build.rs"))?;
-    put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n")?;
-    Ok(())
-}
-
 /// Assemble caller-supplied literal Rust emission without coupling the runtime
 /// package to the Rust emitter. The distribution owns that dependency.
 pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
+    remove_c_artifacts(dir)?;
     fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
     let mut code = code.to_owned();
     code.push_str(STATE_WASM_ABI);
@@ -383,9 +291,9 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     put(dir, "src/lib.rs", code)?;
     put(dir, "src/main.rs", COMPLETE_STATE_RUNNER)?;
     put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[workspace]\n")?;
+    put(dir,"build.rs","fn main(){if std::env::var(\"TARGET\").unwrap().starts_with(\"wasm32\"){println!(\"cargo:rustc-link-arg=-zstack-size=8388608\");}}\n")?;
     put(dir, "state-wasm.mjs", STATE_WASM_HOST)?;
     emit_durable_hosts(dir)?;
-    put(dir, "state-abi.h", ink_abi::STATE_C_HEADER)?;
     Ok(())
 }
 
@@ -423,3 +331,11 @@ pub fn install_usage_identity(dir: &Path, original: &str) -> LangResult<()> {
 pub mod adaptive;
 
 pub mod usage;
+
+/// Standalone CPU fallback for browser GPU bundles, with the same packed exports.
+fn emit_packed_project(code:&str,dir:&Path)->LangResult<()>{
+ fs::create_dir_all(dir.join("src")).map_err(|e|e.to_string())?;
+ put(dir,"src/lib.rs",code)?;
+ put(dir,"Cargo.toml","[package]\nname=\"ink-packed-cpu\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"cdylib\",\"rlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[profile.release]\nlto=\"thin\"\ncodegen-units=1\n[workspace]\n")?;
+ put(dir,"build.rs","fn main(){if std::env::var(\"TARGET\").unwrap().starts_with(\"wasm32\"){println!(\"cargo:rustc-link-arg=-zstack-size=8388608\");}}\n")
+}
