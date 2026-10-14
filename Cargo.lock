@@ -65,7 +65,7 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-abi?rev=10d9a910e0b932e2372646244778b5c31bd4612d#10d9a910e0b932e2372646244778b5c31bd4612d"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=607d5b6391093e00b6bbe1d64b02f05b45dff722#607d5b6391093e00b6bbe1d64b02f05b45dff722"
 dependencies = [
  "serde",
  "serde_json",
@@ -162,7 +162,7 @@ source = "git+https://github.com/siliconjungle/ink-native-support?rev=ecd78df76d
 name = "ink-runtime"
 version = "0.1.0"
 dependencies = [
- "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=10d9a910e0b932e2372646244778b5c31bd4612d)",
+ "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=607d5b6391093e00b6bbe1d64b02f05b45dff722)",
  "ink-core",
  "ink-lowering-c",
  "ink-lowering-gpu",
