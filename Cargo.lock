@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=a52c85e88267204330fb06ebabfee0e903422556#a52c85e88267204330fb06ebabfee0e903422556"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=b091c71b41b29edc434e7c166dabefa4025fa485#b091c71b41b29edc434e7c166dabefa4025fa485"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -98,7 +98,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=2011f68c3061614e6279822f37d31fffd6f453a7#2011f68c3061614e6279822f37d31fffd6f453a7"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=d10b518774a9e0bbb5da602199158e73c6bda825#d10b518774a9e0bbb5da602199158e73c6bda825"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -122,7 +122,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-rust"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=2a1c2b04edcc55c3465bc7bdf03386861e3ec867#2a1c2b04edcc55c3465bc7bdf03386861e3ec867"
+source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=cd102951d70659aa5a3487a59d671cbfadd69500#cd102951d70659aa5a3487a59d671cbfadd69500"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -136,7 +136,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=29dec0577d71cb5e50376534c94352b2be3149fb#29dec0577d71cb5e50376534c94352b2be3149fb"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=b64f026d01f324eb22eceb3219d890e0f5d430d6#b64f026d01f324eb22eceb3219d890e0f5d430d6"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -146,7 +146,7 @@ dependencies = [
 [[package]]
 name = "ink-native-support"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-native-support?rev=ca9bc59f119db62c2c1ea5000b6baf390f94705a#ca9bc59f119db62c2c1ea5000b6baf390f94705a"
+source = "git+https://github.com/siliconjungle/ink-native-support?rev=ecd78df76d17f35aafd37d976574a6b9491c1b78#ecd78df76d17f35aafd37d976574a6b9491c1b78"
 
 [[package]]
 name = "ink-runtime"
