@@ -1,5 +1,6 @@
 import {selectionRequest} from './ink-selection.mjs';
 import {createAdaptiveRecorder} from './adaptive-profile.mjs';
+import {captureUsage,createUsageWindow} from './usage-window.mjs';
 const digest=async bytes=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const read=async url=>url.protocol==='file:'?new Uint8Array(await(await import('node:fs/promises')).readFile(url)):new Uint8Array(await(await fetch(url)).arrayBuffer());
 
@@ -26,17 +27,19 @@ export async function loadAdaptiveState(url,options={}){
  * Calls are captured synchronously and serialized; transitions never repeat a call.
  * No state references escape this facade. State callbacks must not call this facade.
  */
-export async function createAdaptiveState({binding,profile,variants,baseline,policy,recording={},maxPending=64,maxSnapshotBytes=64*1024*1024,maxCaptureBytes=8*1024*1024,onDiagnostic=()=>{},clock=()=>performance.now(),enabled=true}){
+export async function createAdaptiveState({binding,profile,variants,baseline,policy,recording={},usage=null,maxPending=64,maxSnapshotBytes=64*1024*1024,maxCaptureBytes=8*1024*1024,onDiagnostic=()=>{},clock=()=>performance.now(),enabled=true}){
  binding=structuredClone(binding);profile=structuredClone(profile);policy=structuredClone(policy);variants={...variants};
  if(Object.keys(variants).sort().join('\0')!==Object.keys(binding.variants).sort().join('\0')||!Object.hasOwn(variants,baseline))throw Error('adaptive factory binding');
  for(const n of [maxPending,maxSnapshotBytes,maxCaptureBytes])if(!Number.isSafeInteger(n)||n<1||n>Number.MAX_SAFE_INTEGER)throw Error('adaptive host limit');
  let current=baseline,state={pending:'',confirmations:0,last_switch_call:0,switches:0};
  const request=window=>({operation:'adaptive-state',request:{binding,profile,policy,state,window,current}});
  // Load/validate the common Rust/Wasm engine before accepting the first call.
- await selectionRequest(request({counts:{'validate@0':1},calls:1,total_calls:1,state_elements:0,saturated:false}));
+ if(recording===false&&enabled)throw Error('adaptive execution requires recording');
+ if(enabled||recording!==false)await selectionRequest(request({counts:{'validate@0':1},calls:1,total_calls:1,state_elements:0,saturated:false}));
  let live=await variants[current].create(),tail=Promise.resolve(),pending=0,capturedBytes=0,closed=false,disabled=!enabled;
  let bindings=new Map();
- const recorder=createAdaptiveRecorder({...recording,clock});
+ const recorder=recording===false?null:createAdaptiveRecorder({...recording,clock});
+ const usageRecorder=usage===null?null:createUsageWindow(usage);
  const emit=event=>{try{onDiagnostic(structuredClone(event));}catch{}};
  const time=()=>{try{const n=clock();return Number.isFinite(n)?n:null;}catch{return null;}};
  async function dispose(value){try{await value?.dispose?.();}catch(e){emit({kind:'dispose-failed',error:String(e)});}}
@@ -91,11 +94,12 @@ export async function createAdaptiveState({binding,profile,variants,baseline,pol
   call(name,args=[],features={}){
    if(!/^[A-Za-z0-9_]{1,128}$/.test(name))throw Error('adaptive action name');
    if(closed||pending>=maxPending)throw Error('INK_BACKPRESSURE');
-   const owned=capture(args),meta={shape:features.shape,state_elements:features.state_elements};
+   const owned=capture(args),meta={shape:features.shape,state_elements:features.state_elements,usage:usageRecorder?captureUsage(features.usage):null};
    return enqueue(async()=>{
-    const stamp=recorder.start();let result,error,failed=false;
+    const stamp=recorder?.start();let result,error,failed=false;
     try{if(!bindings.has(name)){if(bindings.size>=64)bindings.delete(bindings.keys().next().value);bindings.set(name,live.bind(name));}result=await bindings.get(name)(...owned.value);}catch(e){failed=true;error=e;}
-    let window=null;try{window=recorder.finish('action:'+name,meta.shape??'unknown',stamp,{failed,state_elements:meta.state_elements??0});}catch{}
+    let window=null;try{window=recorder?.finish('action:'+name,meta.shape??'unknown',stamp,{failed,state_elements:meta.state_elements??0});}catch{}
+    if(usageRecorder){try{const flush=usageRecorder.observe(meta.usage,failed);const stats=flush?await flush:null;if(stats)emit({kind:'usage-window',...stats});}catch(error){emit({kind:'usage-failed',error:String(error)});}}
     await consider(window);
     if(failed)throw error;return result;
    },owned.bytes);
@@ -107,7 +111,7 @@ export async function createAdaptiveState({binding,profile,variants,baseline,pol
   },
   // Acknowledgement must be serialized with calls/migrations too.
   acknowledge(commit,position){return enqueue(()=>{const ack=live.acknowledge??live.acknowledgeThrough??live.acknowledge_through;if(!ack)throw Error('state acknowledgement unavailable');return ack.call(live,commit,position);});},
-  status(){return {current,disabled,pending,captured_bytes:capturedBytes,state:{...state},usage:recorder.snapshot()};},
+  status(){return {current,disabled,pending,captured_bytes:capturedBytes,state:{...state},usage:recorder?.snapshot()??null,access:usageRecorder?.snapshot()??null};},
   async close(){if(closed)return tail;closed=true;await tail;await dispose(live);}
  };
 }

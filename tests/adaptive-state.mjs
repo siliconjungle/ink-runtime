@@ -64,3 +64,25 @@ test('a completed call releases its single queue slot before its promise resolve
  for(let i=0;i<10;i++)await host.call('read',[],features);
  assert.equal(host.status().pending,0);await host.close();
 });
+
+test('no recording means no timings, feature windows or controller work',async()=>{
+ const host=await createAdaptiveState({...fixture(),enabled:false,recording:false,clock(){throw Error('clock must not run');}});
+ for(let i=0;i<20;i++)await host.call('read');assert.equal(host.status().usage,null);assert.equal(host.status().access,null);await host.close();
+ await assert.rejects(createAdaptiveState({...fixture(),recording:false}),/requires recording/);
+});
+test('usage samples measure locality and changing access mix without inspecting arguments',async()=>{
+ const host=await createAdaptiveState({...fixture(),enabled:false,recording:false,usage:{windowCalls:4,sampleEvery:1}});
+ for(let i=0;i<4;i++)await host.call('read',[],{usage:{kind:'read',key:1,path:2,size:128,scanned:100}});
+ const first=host.status().access.windows[0];assert.equal(first.summary.repeated_keys,3);assert.equal(first.summary.scanned,400);
+ for(let i=0;i<4;i++)await host.call('write',[i],{usage:{kind:'write',key:i,invalidated:1}});
+ assert.equal(host.status().access.windows[1].operation_mix_drift,1);await host.close();
+});
+test('independent collections switch locally and keep unrelated snapshots untouched',async()=>{
+ const {createAdaptiveCollections}=await import('../hosts/adaptive-collections.mjs');
+ const hot=fixture(),cold=fixture(),group=await createAdaptiveCollections({hot,cold});
+ await group.call('cold','write',[99],features);const before=await group.checkpoint('cold');
+ for(let i=0;i<12;i++)await group.call('hot','read',[],features);
+ assert.equal(group.status().hot.current,'indexed');assert.equal(group.status().cold.current,'direct');
+ assert.equal(cold.created.length,1);assert.deepEqual(await group.checkpoint('cold'),before);assert.throws(()=>group.call('absent','read'),/unknown collection/);await group.close();
+});
+await import('./usage-window.mjs');

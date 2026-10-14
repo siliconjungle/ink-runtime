@@ -35,6 +35,7 @@ pub struct Host<F: Factories> {
     sampled_ns: u128,
     recent: VecDeque<WindowStats>,
     pub disabled: bool,
+    recording: bool,
     pub last_diagnostic: String,
 }
 impl<F: Factories> Host<F> {
@@ -81,12 +82,19 @@ impl<F: Factories> Host<F> {
             sampled_ns: 0,
             recent: VecDeque::new(),
             disabled: false,
+            recording: true,
             last_diagnostic: String::new(),
         };
         host.request.window.counts.clear();
         host.request.window.calls = 0;
         host.request.window.total_calls = 0;
         Ok(host)
+    }
+    /// Stop all runtime recording as well as adaptation. Ordinary fixed calls
+    /// then invoke the compiled state directly, without timing or window work.
+    pub fn disable_recording(&mut self) {
+        self.disabled = true;
+        self.recording = false;
     }
     pub fn current(&self) -> &str {
         &self.request.current
@@ -108,6 +116,9 @@ impl<F: Factories> Host<F> {
         shape: &str,
         state_elements: u64,
     ) -> Result<<F::Instance as CompiledState>::Reply, String> {
+        if !self.recording {
+            return self.live.call(action, args);
+        }
         let sampled = self.request.window.total_calls % self.sample_every == 0;
         let start = sampled.then(Instant::now);
         let reply = self.live.call(action, args);
@@ -185,5 +196,39 @@ impl<F: Factories> Host<F> {
             switches: self.request.state.switches + 1,
         };
         Ok(())
+    }
+}
+
+/// Explicitly independent collections. No inferred source partitioning or atomic
+/// transaction across hosts; each Host retains its own exclusive action boundary.
+pub struct Collections<F: Factories> {
+    hosts: BTreeMap<String, Host<F>>,
+}
+impl<F: Factories> Default for Collections<F> {
+    fn default() -> Self {
+        Self {
+            hosts: BTreeMap::new(),
+        }
+    }
+}
+impl<F: Factories> Collections<F> {
+    pub fn insert(&mut self, id: String, host: Host<F>) -> Result<(), String> {
+        if id.is_empty()
+            || id.len() > 64
+            || !id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+            || self.hosts.len() >= 64
+            || self.hosts.contains_key(&id)
+        {
+            return Err("adaptive collection budget/identity".into());
+        }
+        self.hosts.insert(id, host);
+        Ok(())
+    }
+    pub fn get_mut(&mut self, id: &str) -> Result<&mut Host<F>, String> {
+        self.hosts
+            .get_mut(id)
+            .ok_or_else(|| "unknown collection".into())
     }
 }
