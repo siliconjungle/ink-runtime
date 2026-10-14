@@ -4,6 +4,22 @@ import {pipelineScope} from './pipeline-contract.mjs';
 export async function workloadFeatures(workload){return selectionRequest({operation:'features',workload});}
 export function profileScope(manifest,entry){return JSON.stringify([manifest.core_sha256,manifest.cpu_rust_sha256,manifest.javascript_sha256,entry]);}
 export async function validateCostProfile(profile,targetKey){await selectionRequest({operation:'validate',profile,target_key:targetKey});return profile==null?null:structuredClone(profile);}
+// An explicit preparation owns one private snapshot and encoding. Opaque tokens
+// hold no device or execution state and cannot be forged by shape or name.
+// The caller accounts for preparation once and may reuse the token across engines.
+const preparedProfiles=new WeakMap();
+export async function prepareCostProfile(profile,targetKey){
+ const existing=preparedProfiles.get(profile);
+ const captured=existing?existing.profile:structuredClone(profile);
+ await selectionRequest({operation:'validate',profile:captured,target_key:targetKey});
+ if(captured==null)return null;
+ const token=Object.freeze(Object.create(null));
+ preparedProfiles.set(token,{profile:captured,encoded:existing?.encoded??JSON.stringify(captured)});
+ return token;
+}
+export function captureCostProfile(profile){
+ return preparedProfiles.has(profile)?profile:structuredClone(profile);
+}
 // The shared ABI decision is a pure function of these complete JSON inputs.
 // Reuse across engines avoids resending an identical profile. No object identity,
 // profile name, predicted cost, or partial workload key can establish a hit.
@@ -34,13 +50,15 @@ function rememberDecision(optionsKey,key,result){
 }
 
 export function createSelector({policy='adaptive',staticBackend='cpu',costProfile=null,targetKey=''}={}){
- const options=structuredClone({policy,static_backend:staticBackend,cost_profile:costProfile,target_key:targetKey});
+ const prepared=preparedProfiles.get(costProfile);
+ const options=structuredClone({policy,static_backend:staticBackend,target_key:targetKey,cost_profile:prepared?null:costProfile});
+ if(prepared)options.cost_profile=prepared.profile;
  // Snapshot caller options once. Serialization is lazy, preserving constructor
  // behaviour and counting first-use profile preparation in the first decision.
  let optionsKey;
  const choose=async(eligible,context={})=>{
   const key=JSON.stringify({eligible,context});
-  optionsKey??=JSON.stringify(options);
+  optionsKey??=JSON.stringify({policy:options.policy,static_backend:options.static_backend,target_key:options.target_key}).slice(0,-1)+',"cost_profile":'+(prepared?.encoded??JSON.stringify(options.cost_profile))+'}';
   const cached=cachedDecision(optionsKey,key);if(cached!==undefined)return JSON.parse(cached);
   // Capture before the Wasm loader can yield; caller mutation must not bind
   // a result for a different workload under the earlier key.

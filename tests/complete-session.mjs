@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {completeSession} from '../hosts/complete-session.mjs';
+import {prepareCostProfile} from '../hosts/backend-selection.mjs';
 
 function fixture(failure){
  const events=[],context={scope:'engine',boundary:'captured-owned',features:{iterations:3}};
@@ -41,4 +42,10 @@ test('invalid complete workloads reject before allocating an engine',async()=>{
  for(const options of [{iterations:0},{iterations:1.5},{iterations:true},{iterations:1_000_001},{iterations:3,backend:'javascript'}]){
   const f=fixture();await assert.rejects(completeSession(f.load,'bundle/',{},options),/complete session/);assert.deepEqual(f.events,[]);
  }
+});
+test('complete execution retains an already captured immutable profile token',async()=>{
+ const prepared=await prepareCostProfile({schema:1,target_key:'device',models:{}},'device');
+ const f=fixture();
+ await completeSession(f.load,'bundle/',{steps:[{id:'next'}]},{iterations:3,costProfile:prepared});
+ assert.equal(f.settings.costProfile,prepared);
 });

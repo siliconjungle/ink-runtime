@@ -188,6 +188,19 @@ runs when opening, execution or reading fails. `backend` accepts `auto`, `cpu`,
 `gpu` or `gpu-required`; automatic execution retains CPU without comparable
 evidence. No runtime timing probes are performed.
 
+For repeated calls, `const prepared = await prepareCostProfile(profile, targetKey)`
+creates an opaque immutable profile token accepted by `costProfile`. Preparation
+captures and validates the profile once, retaining a private encoding; later
+engines do not copy that model graph or rebuild its decision-cache encoding.
+A cache miss still sends the profile through the shared ABI decision validator.
+Original profile mutations
+cannot change the token. The same shared ABI decision, target checks and bounded
+exact-input decision cache still apply. Tokens are local handles, not serialised
+profiles or proof authority. Keep the original JSON for persistence. Preparation
+owns no device or mutable execution state. Include its one-time cost in the whole
+workload and report the number of calls over which that cost is amortised; it is
+outside each subsequent `executeSession` lifetime.
+
 This operation uses `ink-resident-engine-v1` scopes. Ordinary `loadInk`/`open`
 sessions retain their separate `ink-resident-session-v2` scopes, so their profiles
 cannot be substituted for one another. Both bind the same compiled host and

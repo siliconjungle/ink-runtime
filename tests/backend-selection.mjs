@@ -2,7 +2,41 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import './shared-host-assets.mjs';
 const {createSelector}=await import('../hosts/backend-selection.mjs');
+const {prepareCostProfile,captureCostProfile}=await import('../hosts/backend-selection.mjs');
 const costProfile={schema:1,target_key:'test-device',models:{kernel:{boundary:'captured-owned',domains:{input_elements:[0,65536],input_bytes:[0,262144]},backends:{cpu:{intercept_ns:100,terms:{input_elements:10}},javascript:{intercept_ns:20,terms:{input_elements:20}},gpu:{intercept_ns:1000,terms:{input_elements:1}}}}}};
+test('prepared profiles capture before yielding and preserve shared decisions and target rejection',async()=>{
+ const input=structuredClone(costProfile),pending=prepareCostProfile(input,'test-device');
+ input.models.kernel.backends.gpu.intercept_ns=1e12;
+ const prepared=await pending;
+ assert.ok(Object.isFrozen(prepared));assert.deepEqual(Object.keys(prepared),[]);
+ assert.equal(captureCostProfile(prepared),prepared);
+ assert.equal(await prepareCostProfile(null,'test-device'),null);
+ for(const n of [1,1000,65537])for(const eligible of [['cpu'],['cpu','gpu'],['cpu','javascript','gpu']]){
+  const context={scope:'kernel',boundary:'captured-owned',features:{input_elements:n,input_bytes:4*n}};
+  const expected=await createSelector({costProfile,targetKey:'test-device'}).choose(eligible,context);
+  assert.deepEqual(await createSelector({costProfile:prepared,targetKey:'test-device'}).choose(eligible,context),expected);
+ }
+ await assert.rejects(createSelector({costProfile:prepared,targetKey:'wrong'}).choose(['cpu','gpu']),/target/);
+ await assert.rejects(prepareCostProfile(prepared,'wrong'),/target/);
+ await assert.rejects(createSelector({costProfile:structuredClone(prepared),targetKey:'test-device'}).choose(['cpu']),/target\/schema/);
+ const rebound=await prepareCostProfile(prepared,'test-device');
+ assert.notEqual(prepared,rebound);
+});
+
+test('prepared profile reuse avoids cloning its model graph and retains owned results',async()=>{
+ const prepared=await prepareCostProfile(costProfile,'test-device');
+ const original=globalThis.structuredClone;let modelCopies=0;
+ globalThis.structuredClone=value=>{if(value?.models||value?.cost_profile?.models)modelCopies++;return original(value);};
+ try{
+  const context={scope:'kernel',boundary:'captured-owned',features:{input_elements:1000,input_bytes:4000}};
+  const a=createSelector({costProfile:captureCostProfile(prepared),targetKey:'test-device'});
+  const first=await a.choose(['cpu','gpu'],context);first.backend='changed';
+  const b=createSelector({costProfile:captureCostProfile(prepared),targetKey:'test-device'});
+  assert.equal((await b.choose(['cpu','gpu'],context)).backend,'gpu');
+  a.clear();assert.equal((await b.choose(['cpu','gpu'],context)).backend,'gpu');
+  assert.equal(modelCopies,0);
+ }finally{globalThis.structuredClone=original;}
+});
 test('adaptive saved profiles choose by size without probing or reading the timer',async()=>{
  const calls={cpu:0,javascript:0,gpu:0},prepared={cpu:0,javascript:0,gpu:0};
  const candidates=Object.keys(calls).map(name=>({name,prepare(){prepared[name]++},run(){calls[name]++;return 7}}));

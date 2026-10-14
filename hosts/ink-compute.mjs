@@ -5,6 +5,7 @@ import {createSelector,profileScope,workloadFeatures,sessionWorkload,sessionCont
 import {pipelineScope,segmentOutputs,segmentContexts,placementBackends} from './pipeline-contract.mjs';
 import {createPackedCall} from "./prepared-wasm.mjs";
 import {completeSession} from './complete-session.mjs';
+export {prepareCostProfile} from './backend-selection.mjs';
 const ENGINE_LIFETIME=Symbol('owned complete engine');
 export function executeSession(base,plan,options){
   return completeSession((url,settings)=>loadInk(url,settings,ENGINE_LIFETIME),base,plan,options);
