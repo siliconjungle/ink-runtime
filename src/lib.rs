@@ -266,6 +266,13 @@ fn assemble(
 }
 
 pub const STATE_WASM_ABI: &str = ink_native_support::STATE_EXPORTS_RUST_SOURCE;
+/// Emit opt-in state adaptation beside already checked compiled variants.
+pub fn write_adaptive_host(dir: &std::path::Path) -> LangResult<()> {
+    put(dir, "adaptive-state.mjs", include_str!("../hosts/adaptive-state.mjs"))?;
+    put(dir, "adaptive-profile.mjs", include_str!("../hosts/adaptive-profile.mjs"))?;
+    put(dir, "ink-selection.mjs", ink_abi::SELECTION_JS_SOURCE)?;
+    put(dir, "ink-selection.wasm", ink_abi::SELECTION_WASM)
+}
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
 pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {
@@ -410,3 +417,5 @@ pub fn install_usage_identity(dir: &Path, original: &str) -> LangResult<()> {
     let (_,remaining)=assets.split_once('\n').ok_or("invalid native asset header")?;
     put(dir,"native/src/assets.rs",format!("pub const MANIFEST:&str={encoded:?};\n{remaining}"))
 }
+
+pub mod adaptive;
