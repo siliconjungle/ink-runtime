@@ -179,6 +179,32 @@ network protocol or profitability rule is introduced by this transport support.
 
 ### Profiled resident sessions
 
+For a complete engine lifetime, the packed browser bundle exports
+`await executeSession(base, plan, {iterations:32, costProfile, targetKey})`.
+It copies inputs and profile before yielding, creates one engine, opens one
+session, executes the requested iterations, reads all declared outputs once,
+then closes the session and engine before returning owned values. Cleanup also
+runs when opening, execution or reading fails. `backend` accepts `auto`, `cpu`,
+`gpu` or `gpu-required`; automatic execution retains CPU without comparable
+evidence. No runtime timing probes are performed.
+
+This operation uses `ink-resident-engine-v1` scopes. Ordinary `loadInk`/`open`
+sessions retain their separate `ink-resident-session-v2` scopes, so their profiles
+cannot be substituted for one another. Both bind the same compiled host and
+actual preparation context. The result includes the exact cost context and
+post-disposal buffer counters. A caller-supplied GPU device remains externally
+owned; its earlier creation is outside this call's lifetime.
+
+The planner's `engine_profiles.fit_records` imports complete-engine observations
+from at least three distinct training processes and uses the existing bounded
+cost fitter and database feature-product basis. It rejects session scopes,
+evaluation records, fallback-device measurements, changed provenance and missing
+case coverage. The distribution's `engine-profile-browser.mjs` acquires complete
+calls; `fit-engine-profile.py` retains their immutable identities. Browser startup,
+common module import and input generation are outside acquisition. Shared caches
+can be warm. This models the measured engine operation, not a cold browser or
+total process memory, and requires independent held-out profitability evaluation.
+
 `await engine.describeSession(plan, {iterations:32, readbacks:1})` returns the
 scope, boundary and workload features for an expected complete session:
 open/capture/upload, 32 iterations, completion, one full owned output read and

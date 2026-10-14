@@ -75,14 +75,15 @@ export function sessionWorkload(value){
  if(!Number.isSafeInteger(iterations)||iterations<1||iterations>1_000_000||!Number.isSafeInteger(readbacks)||readbacks<0||readbacks>1_000_000)throw Error('session workload count limit');
  return {iterations,readbacks};
 }
-export async function sessionContext(manifest,p,workload,dispatches,preparation=null){
+export async function sessionContext(manifest,p,workload,dispatches,preparation=null,objective='session'){
+ if(!['session','engine'].includes(objective))throw Error('unsupported lifecycle cost objective');
  if(workload==null)return {};
  // A session ignores plan.iterations until step(n). Bind its actual topology,
  // including names -> constant slots, output ids and simultaneous feedback.
  // Distinct scope prevents ordinary-call/prepared-input profiles being reused.
  // Cold device/CPU initialization and missing shaders have different setup
  // costs. Unknown preparation state cannot match measured runtime contexts.
- const scope=JSON.stringify(['ink-resident-session-v2',pipelineScope(manifest,{...p,iterations:1}),p.steps.map(s=>s.id),[...p.inputs].map(([name,r])=>[name,r.index]),workload.readbacks,preparation]);
+ const scope=JSON.stringify([objective==='engine'?'ink-resident-engine-v1':'ink-resident-session-v2',pipelineScope(manifest,{...p,iterations:1}),p.steps.map(s=>s.id),[...p.inputs].map(([name,r])=>[name,r.index]),workload.readbacks,preparation]);
  const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>(p.steps[p.ids.get(id)].count??0)*workload.readbacks),stages:[{dispatches}],iterations:workload.iterations});
  return {scope,boundary:'captured-owned',features};
 }

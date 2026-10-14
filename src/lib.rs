@@ -87,6 +87,7 @@ fn assemble(
     if compute {
         let hosts = json!([
             ["ink-gpu.mjs", include_str!("../hosts/ink-compute.mjs")],
+            ["complete-session.mjs", include_str!("../hosts/complete-session.mjs")],
             ["pipeline-contract.mjs", include_str!("../hosts/pipeline-contract.mjs")],
             ["backend-selection.mjs", include_str!("../hosts/backend-selection.mjs")],
             ["prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs")],
@@ -118,6 +119,7 @@ fn assemble(
     put(dir, "manifest.json", &manifest)?;
     put(dir, "program.mjs", &javascript.javascript)?;
     if compute {
+        put(dir, "complete-session.mjs", include_str!("../hosts/complete-session.mjs"))?;
         put(dir, "prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs"))?;
         put(dir, "pipeline-profile.mjs", include_str!("../hosts/pipeline-profile.mjs"))?;
         put(dir, "pipeline-workers.mjs", include_str!("../hosts/pipeline-workers.mjs"))?;

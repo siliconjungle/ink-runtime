@@ -20,7 +20,7 @@ const functions=specs.map(([name,params,result],index)=>({index,name,params:para
 async function fixture(run,options={}) {
  const dir=await mkdtemp(join(tmpdir(),'ink-lean-runtime-'));
  await copySharedHostAssets(dir);
- for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs','pipeline-contract.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
+ for(const name of ['ink-compute.mjs','backend-selection.mjs','prepared-wasm.mjs','complete-session.mjs','pipeline-contract.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const dispatchCount=p=>p.steps.length;export const createDevice=()=>({close(){},prepare(){throw Error('GPU unavailable')},run(){throw Error('GPU unavailable')},capture(p){const outputs=p.outputs.slice();return {setup:{upload_bytes:4},run(){return {values:Object.fromEntries(outputs.map(id=>[id,[7]])),counters:{upload_bytes:0}}},close(){}}}});");
  await writeFile(join(dir,'program.mjs'),`export const metadata={functions:[]};export const functions={
   increment:xs=>Array.from(xs,x=>(x+1)>>>0),negative:xs=>Array.from(xs,x=>x<0),count:xs=>BigInt(xs.length),
@@ -93,14 +93,14 @@ test('packed CPU remains available and profile-free auto retains equivalent CPU 
 test('scalar host binds native JS and lazily retains its Wasm fallback',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'ink-lean-scalar-'));
  await copySharedHostAssets(dir);
- for(const name of ['ink-gpu.mjs','backend-selection.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
+ for(const name of ['ink-gpu.mjs','backend-selection.mjs','pipeline-contract.mjs'])await copyFile(new URL(`../hosts/${name}`,import.meta.url),join(dir,name));
  await writeFile(join(dir,'ink-device.mjs'),"export const dispatchCount=p=>p.steps.length;export const createDevice=()=>({close(){}});");
  await writeFile(join(dir,'program.mjs'),"export const metadata={functions:[]};export const functions={advance:(x,y)=>(x+y)>>>0,total:xs=>{let n=0;for(const x of xs)n=(n+x)>>>0;return n}};");
  const manifest={schema:1,backend:'webgpu-wgpu-v1',functions:[{index:0,name:'advance',params:[{type:'u32'},{type:'u32'}],result:'u32'},{index:1,name:'total',params:[{type:'list_u32'}],result:'u32'}]};
  const oldFetch=globalThis.fetch,oldInstantiate=WebAssembly.instantiate;
  let wasmLoads=0;
  globalThis.fetch=async url=>({ok:true,json:async()=>manifest,arrayBuffer:async()=>new ArrayBuffer(0)});
- WebAssembly.instantiate=async(...args)=>{if(args[0]?.byteLength)return oldInstantiate(...args);wasmLoads++;return {instance:{exports:{__heap_base:{value:0},lang_fn_advance:(x,y)=>(x+y)|0}}};};
+ WebAssembly.instantiate=async(...args)=>{if(args[0]?.byteLength)return oldInstantiate(...args);wasmLoads++;return {instance:{exports:{__heap_base:{value:0},ink_compute_reset(){},lang_fn_advance:(x,y)=>(x+y)|0}}};};
  try {
   const {loadInk}=await import(pathToFileURL(join(dir,'ink-gpu.mjs')));
   const runtime=await loadInk(pathToFileURL(`${dir}/`),{gpu:false,backend:'javascript'});

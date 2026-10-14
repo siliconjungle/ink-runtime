@@ -73,6 +73,7 @@ test('reused decisions preserve private ownership and recheck changed eligibilit
 
 // Adaptive state uses the same native/Wasm decision boundary.
 import './adaptive-state.mjs';
+import './complete-session.mjs';
 
 const {sessionWorkload,sessionContext}=await import('../hosts/backend-selection.mjs');
 const sessionManifest={core_sha256:'core',cpu_rust_sha256:'cpu',javascript_sha256:'js',runtime_host_sha256:'host',shaders:['shader']};
@@ -82,6 +83,20 @@ function sessionPlan(){
   steps:[{id:'updated',f:{name:'update'},args:[{input:'rows',kind:'constant',index:0}],count:100}],
   ids:new Map([['updated',0]]),outputs:['updated'],feedback:new Map([['rows',0]]),iterations:999};
 }
+test('complete engine profiles cannot authorise resident session decisions or the reverse',async()=>{
+ const p=sessionPlan(),forecast=sessionWorkload({iterations:32});
+ const preparation={cpu:false,gpu:{device:false,shaders:[['update',false]]}};
+ const session=await sessionContext(sessionManifest,p,forecast,1,preparation);
+ const engine=await sessionContext(sessionManifest,p,forecast,1,preparation,'engine');
+ assert.notEqual(engine.scope,session.scope);assert.deepEqual(engine.features,session.features);
+ for(const [measured,other]of [[session,engine],[engine,session]]){
+  const profile={schema:1,target_key:'device',models:{[measured.scope]:{boundary:measured.boundary,domains:{iterations:[1,32]},backends:{cpu:{intercept_ns:100,terms:{}},gpu:{intercept_ns:1,terms:{}}}}}};
+  const selector=createSelector({targetKey:'device',costProfile:profile});
+  assert.equal((await selector.choose(['cpu','gpu'],measured)).backend,'gpu');
+  assert.equal((await selector.choose(['cpu','gpu'],other)).backend,'cpu');
+ }
+ await assert.rejects(sessionContext(sessionManifest,p,forecast,1,preparation,'kernel-only'),/objective/);
+});
 test('resident profiles never transfer warm costs to cold CPU, device or shaders',async()=>{
  const p=sessionPlan(),workload=sessionWorkload({iterations:32});
  const warm={cpu:true,gpu:{device:true,shaders:[['update',true]]}};

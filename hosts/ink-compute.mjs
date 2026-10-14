@@ -4,6 +4,11 @@ const {createDevice,dispatchCount,fieldPath,reducible,decodeComponents,combineWo
 import {createSelector,profileScope,workloadFeatures,sessionWorkload,sessionContext} from "./backend-selection.mjs";
 import {pipelineScope,segmentOutputs,segmentContexts,placementBackends} from './pipeline-contract.mjs';
 import {createPackedCall} from "./prepared-wasm.mjs";
+import {completeSession} from './complete-session.mjs';
+const ENGINE_LIFETIME=Symbol('owned complete engine');
+export function executeSession(base,plan,options){
+  return completeSession((url,settings)=>loadInk(url,settings,ENGINE_LIFETIME),base,plan,options);
+}
 // Trusted values ABI: caller supplies correctly typed, stable arguments.
 // Packing is transport for Wasm/GPU, never the JavaScript execution representation.
 const MAX_BYTES = 256 * 1024 * 1024,
@@ -172,7 +177,9 @@ function compilePlan(plan, functions, native = false) {
 export async function loadInk(
   base,
   { gpu = true, device = null, backend: defaultBackend = "auto", expectedCalls=32, policy="adaptive", staticBackend="cpu", costProfile=null, placementProfile=null, targetKey="", parallelism=0, workerTimeoutMs=30000 } = {},
+  lifetime=null,
 ) {
+  const costObjective=lifetime===ENGINE_LIFETIME?'engine':'session';
   const root = new URL(base, globalThis.location?.href ?? "http://localhost/");
   if (!root.pathname.endsWith("/")) root.pathname += "/";
   const manifest = await (await fetch(new URL("manifest.json", root))).json();
@@ -573,9 +580,10 @@ export async function loadInk(
     } catch(error){return Promise.reject(error);}
     return serial(async()=>{
       if(closed)fail('Ink runtime is closed');
-      let state=null,reason,decision=null,choice=backend;
+      let state=null,reason,decision=null,choice=backend,context=null;
+      if(backend==='auto'||costObjective==='engine')
+        context=await sessionContext(manifest,p,forecast,dispatchCount(p),{cpu:!!cpu,gpu:adapter.preparation(p)},costObjective);
       if(backend==='auto'){
-        const context=await sessionContext(manifest,p,forecast,dispatchCount(p),{cpu:!!cpu,gpu:adapter.preparation(p)});
         decision=await selector.choose(['cpu',...(!p.reason&&gpu&&!gpuFailed?['gpu']:[])],context);
         choice=decision.backend;reason=decision.reason;
       }
@@ -594,7 +602,7 @@ export async function loadInk(
       const name=state.gpu?'gpu':'cpu';
       const guard=()=>{if(closed)fail('Ink runtime is closed');if(ended)fail('session closed');};
       const session={
-        backend:name,reason,profile:decision,
+        backend:name,reason,profile:decision,costContext:context,
         counters:{upload_bytes:state.gpu?state.gpu.A.upload:0,get live_buffer_bytes(){return state.gpu?state.gpu.A.live:null;},get peak_buffer_bytes(){return state.gpu?state.gpu.A.peak:null;}},
         get iteration(){return state.gpu?.iteration??state.cpu?.iteration??0;},
         // Run more iterations. Nothing is read back; GPU work is submitted
@@ -636,7 +644,7 @@ export async function loadInk(
       try{
         if(closed)fail('Ink runtime is closed');
         const p=compilePlan(plan,functions,false),forecast=sessionWorkload(workload);
-        return sessionContext(manifest,p,forecast,dispatchCount(p),{cpu:!!cpu,gpu:adapter.preparation(p)});
+        return sessionContext(manifest,p,forecast,dispatchCount(p),{cpu:!!cpu,gpu:adapter.preparation(p)},costObjective);
       }catch(error){return Promise.reject(error);}
     },
     describePipeline: plan => {
