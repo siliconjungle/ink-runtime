@@ -117,30 +117,6 @@ fn closure(p: &Program, name: &str) -> LangResult<CheckedModule> {
     sub.termination=Default::default();
     CheckedModule::from_source(sub)
 }
-fn symbols(source: &str, prefix: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1
-            }
-            let word = &source[start..i];
-            if word.starts_with("ink_") || word.starts_with("lang_") {
-                out.push_str(prefix)
-            }
-            out.push_str(word)
-        } else {
-            let ch = source[i..].chars().next().unwrap();
-            out.push(ch);
-            i += ch.len_utf8()
-        }
-    }
-    out
-}
 fn gpu_entry_eligible(entry: &serde_json::Value) -> bool {
     entry["shader"].is_string() || entry["graph"].is_object() || entry["gpu"].is_object()
 }
@@ -152,6 +128,7 @@ pub fn emit_selected(
     selected: &ink_core::optimisation::CheckedSelection,
     dir: &Path,
 ) -> LangResult<()> {
+    super::remove_c_artifacts(dir)?;
     emit_checked(selected.module(), Some(selected),None, dir)
 }
 pub fn emit_planned(plan:&ink_core::planning::CheckedPlan,dir:&Path)->LangResult<()> {
@@ -168,13 +145,13 @@ fn emit_checked(
     let p = module.program();
     fs::create_dir_all(dir.join("native/src")).map_err(|e| e.to_string())?;
     let js = if let Some(plan)=plan {
-        super::emit_c_program_planned(plan,&dir.join("cpu"))?;
+        super::emit_rust_program(&ink_lowering_rust::state_native::emit_planned(plan)?,&dir.join("cpu"))?;
         ink_lowering_js::lower_planned(plan)?
     } else if let Some(selected) = selected {
-        super::emit_c_program_selected(selected, &dir.join("cpu"))?;
+        super::emit_rust_program(&ink_lowering_rust::state_native::emit_selected(selected)?, &dir.join("cpu"))?;
         ink_lowering_js::lower_selected(selected)?
     } else {
-        super::emit_c_program(module, &dir.join("cpu"))?;
+        super::emit_rust_program(&ink_lowering_rust::state_native::emit(module.program())?, &dir.join("cpu"))?;
         ink_lowering_js::lower(module)?
     };
     super::put(dir, "program.mjs", js.javascript)?;
@@ -184,7 +161,7 @@ fn emit_checked(
     let mut functions = vec![];
     let mut mods = String::new();
     let mut cases = String::new();
-    let mut builds = String::new();
+    
     let mut fields = String::new();
     let mut init = String::new();
     for (i, f) in p.functions.iter().enumerate() {
@@ -208,32 +185,12 @@ fn emit_checked(
                     .unwrap();
                 let eligible = gpu_entry_eligible(entry);
                 if eligible {
-                    let prefix = format!("ink_part{i}_");
-                    let cpath = dir.join(&folder).join("native/cpu.c");
-                    let c = fs::read_to_string(&cpath).map_err(|e| e.to_string())?;
-                    fs::write(&cpath, symbols(&c, &prefix)).map_err(|e| e.to_string())?;
-                    let libpath = dir.join(&folder).join("native/src/lib.rs");
-                    let lib = fs::read_to_string(&libpath).map_err(|e| e.to_string())?;
-                    let lib = lib
-                        .replace(
-                            "fn ink_compute_call(",
-                            &format!("fn {prefix}ink_compute_call("),
-                        )
-                        .replace("ink_compute_call(", &format!("{prefix}ink_compute_call("))
-                        .replace(
-                            "ink_compute_reset()",
-                            &format!("{prefix}ink_compute_reset()"),
-                        )
-                        .replace("ink_cpu_call(", &format!("{prefix}ink_cpu_call("));
-                    fs::write(libpath, lib.replace(&format!("{prefix}{prefix}"), &prefix))
-                        .map_err(|e| e.to_string())?;
                     fields.push_str(&format!("part{i}:part{i}::Engine,"));
                     init.push_str(&format!("part{i}:part{i}::Engine::new(),"));
                     mods.push_str(&format!(
                         "#[path=\"../../{folder}/native/src/lib.rs\"] mod part{i};\n"
                     ));
                     cases.push_str(&format!("{:?}=>{{if let Some(options)=options{{self.part{i}.configure_selection(options.clone())?;}}self.part{i}.call(name,args,part{i}::Backend::parse(backend)?) }},\n",f.name));
-                    builds.push_str(&format!("cc::Build::new().file(\"../{folder}/native/cpu.c\").opt_level(3).compile(\"part{i}\");\n"));
                     json!({"name":f.name,"bundle":format!("{folder}/"),"gpu":true,"strategy":manifest["collection_strategy"],"fallback_reason":null})
                 } else {
                     json!({"name":f.name,"gpu":false,"fallback_reason":entry["fallback_reason"]})
@@ -257,8 +214,7 @@ fn emit_checked(
         .lines()
         .find(|line| line.starts_with("ink-abi ="))
         .ok_or("missing shared native ABI dependency")?;
-    super::put(dir,"native/Cargo.toml","[package]\nname=\"ink-module-program\"\nversion=\"0.1.0\"\nedition=\"2021\"\nautolib=false\n[dependencies]\ncompiled-state={path=\"../cpu\"}\nwgpu=\"=30.0.1\"\npollster=\"0.4\"\nserde_json={version=\"1\",features=[\"float_roundtrip\"]}\n[build-dependencies]\ncc=\"1\"\n[workspace]\n".replace("[dependencies]\n",&format!("[dependencies]\n{abi_dependency}\n")))?;
-    super::put(dir, "native/build.rs", format!("fn main(){{{builds}}}"))?;
+    super::put(dir,"native/Cargo.toml","[package]\nname=\"ink-module-program\"\nversion=\"0.1.0\"\nedition=\"2021\"\nautolib=false\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\ncompiled-state={path=\"../cpu\"}\nwgpu=\"=30.0.1\"\npollster=\"0.4\"\nserde_json={version=\"1\",features=[\"float_roundtrip\"]}\n[workspace]\n".replace("[dependencies]\n",&format!("[dependencies]\n{abi_dependency}\n")))?;
     let code=format!("{mods}\nstruct GpuEngines{{{fields}}}impl GpuEngines{{fn new()->Self{{Self{{{init}}}}} fn call(&mut self,name:&str,args:&serde_json::Value,backend:&str,options:Option<&serde_json::Value>)->Result<serde_json::Value,String>{{match name{{{cases}_=>Err(\"CPU-only function\".into())}}}}}}\n{}",include_str!("../hosts/native/module-main.rs"));
     super::put(dir, "native/src/state-cli.rs", super::NATIVE_STATE_CLI)?;
     super::put(dir, "native/src/main.rs", code)

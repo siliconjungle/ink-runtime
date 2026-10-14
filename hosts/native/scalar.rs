@@ -1,4 +1,4 @@
-//! Standalone native host: generated C CPU code, the same WGSL as the browser,
+//! Standalone native host: generated Rust CPU code, the same WGSL as the browser,
 //! and bounded saved-model selection. No Ink AST interpreter is linked.
 mod assets;
 use serde_json::{json, Value};
@@ -12,14 +12,9 @@ use std::{
     time::{Duration, Instant},
 };
 type Result<T> = std::result::Result<T, String>;
-extern "C" {
-    fn ink_cpu_call(
-        function: u32,
-        lists: *const *const c_void,
-        lengths: *const usize,
-        scalars: *const u64,
-    ) -> u64;
-}
+mod cpu;
+use cpu::{ink_cpu_call};
+
 mod backend;
 pub use backend::Backend;
 #[derive(Clone)]
@@ -87,7 +82,7 @@ fn cpu(f: &Value, args: &[Arg]) -> u64 {
             }
         }
     }
-    // Validated ABI arrays remain live for this synchronous generated C call.
+    // Validated ABI arrays remain live for this synchronous generated Rust call.
     unsafe {
         ink_cpu_call(
             f["index"].as_u64().unwrap() as u32,
@@ -171,7 +166,7 @@ impl Engine {
             let arguments = stage["arguments"].as_array().ok_or("missing route arguments")?.iter().map(|r|resolve(r,&values,&inputs)).collect::<Result<Vec<_>>>()?;
             let bridge_ms = bridge.elapsed().as_secs_f64()*1000.;
             let mode = match (stage["backend"].as_str(), stage["domain"].as_str()) {
-                (Some("c"), Some("cpu")) => Backend::Cpu,
+                (Some("rust"), Some("cpu")) => Backend::Cpu,
                 (Some("gpu"), Some("gpu")) => Backend::Gpu,
                 _ => return Err("unsupported compiled placement".into()),
             };
@@ -243,7 +238,7 @@ impl Engine {
                 None,
             ));
         }
-        let scope=json!([self.manifest["core_sha256"],self.manifest["cpu_c_sha256"],self.manifest["javascript_sha256"],f["name"]]).to_string();
+        let scope=json!([self.manifest["core_sha256"],self.manifest["cpu_rust_sha256"],self.manifest["javascript_sha256"],f["name"]]).to_string();
         let inputs=args.iter().enumerate().map(|(i,a)|match a{Arg::Scalar(_)=>json!({"list":false,"count":1,"bytes":if f["params"][i]["type"]=="u64"{8}else{4}}),Arg::U32List(xs)=>json!({"list":true,"count":xs.len(),"bytes":xs.len()*4}),Arg::U64List(xs)=>json!({"list":true,"count":xs.len(),"bytes":xs.len()*8})}).collect::<Vec<_>>();
         let features=ink_abi::selection::features(&json!({"inputs":inputs,"outputs":[1],"stages":[{"dispatches":1}],"iterations":1}))?;
         let decision=ink_abi::selection::decide(&self.selection_options,&json!({"scope":scope,"boundary":"captured-owned","features":features}),&["cpu".into(),"gpu".into()])?;

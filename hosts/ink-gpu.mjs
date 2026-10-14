@@ -36,19 +36,20 @@ export async function loadInk(base,options={}){
   const javascriptFunctions=new Map(manifest.functions.map(f=>[f.name,javascript.functions[f.name]]));
   const adapter=createDevice({asset,onLost:()=>selector.clear()});
   function cpu(f,args){
-    const memory=instance.exports.memory;let top=Number(instance.exports.__heap_base.value);const abi=[];
-    for(let i=0;i<args.length;i++){
-      const v=args[i],t=f.params[i].type;
-      if(t.startsWith('list_')){
-        top=Math.ceil(top/8)*8;const end=top+v.byteLength;
-        if(end>0xffffffff)throw Error('Wasm input exceeds address space');
-        if(end>memory.buffer.byteLength)memory.grow(Math.ceil((end-memory.buffer.byteLength)/65536));
-        new Uint8Array(memory.buffer,top,v.byteLength).set(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));
-        abi.push(top,v.length);top=end;
-      }else abi.push(t==='bool'?(v?1:0):v);
-    }
-    const value=instance.exports[`lang_fn_${f.name}`](...abi);
-    return f.result==='u32'?value>>>0:f.result==='u64'?BigInt.asUintN(64,value):Boolean(value);
+    instance.exports.ink_compute_reset();
+    try {
+      const abi=[];
+      for(let i=0;i<args.length;i++){
+        const v=args[i],t=f.params[i].type;
+        if(t.startsWith('list_')){
+          const pointer=instance.exports.ink_alloc(v.length,t==='list_u32'?4:8);
+          new Uint8Array(instance.exports.memory.buffer,pointer,v.byteLength).set(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));
+          abi.push(pointer,v.length);
+        }else abi.push(t==='bool'?(v?1:0):v);
+      }
+      const value=instance.exports[`lang_fn_${f.name}`](...abi);
+      return f.result==='u32'?value>>>0:f.result==='u64'?BigInt.asUintN(64,value):Boolean(value);
+    } finally {instance.exports.ink_compute_reset();}
   }
   async function run(f,args,backend){
     if(closed)throw Error('Ink runtime is closed');

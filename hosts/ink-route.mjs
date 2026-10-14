@@ -16,7 +16,7 @@ export async function loadRoute(base,options={}){
     }
     for(const s of route.stages){
       const f=functions.get(s.function);
-      if(types.has(s.id)||!f||!((s.backend==='c'&&s.domain==='cpu')||(s.backend==='gpu'&&s.domain==='gpu'))||s.arguments.length!==f.params.length||s.arguments.some((r,i)=>refType(r)!==f.params[i].type))throw Error('invalid compiled stage or typed edge');
+      if(types.has(s.id)||!f||!((s.backend==='rust'&&s.domain==='cpu')||(s.backend==='gpu'&&s.domain==='gpu'))||s.arguments.length!==f.params.length||s.arguments.some((r,i)=>refType(r)!==f.params[i].type))throw Error('invalid compiled stage or typed edge');
       types.set(s.id,f.result);
     }
     if(refType(route.output)!==entry.result)throw Error('invalid compiled route result');

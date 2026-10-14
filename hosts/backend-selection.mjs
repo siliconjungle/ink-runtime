@@ -1,7 +1,7 @@
 // Decisions execute the same ink-abi Rust implementation used by native hosts.
 import {selectionRequest} from './ink-selection.mjs';
 export async function workloadFeatures(workload){return selectionRequest({operation:'features',workload});}
-export function profileScope(manifest,entry){return JSON.stringify([manifest.core_sha256,manifest.cpu_c_sha256,manifest.javascript_sha256,entry]);}
+export function profileScope(manifest,entry){return JSON.stringify([manifest.core_sha256,manifest.cpu_rust_sha256,manifest.javascript_sha256,entry]);}
 export async function validateCostProfile(profile,targetKey){await selectionRequest({operation:'validate',profile,target_key:targetKey});return profile==null?null:structuredClone(profile);}
 export function createSelector({policy='adaptive',staticBackend='cpu',costProfile=null,targetKey=''}={}){
  const options=structuredClone({policy,static_backend:staticBackend,cost_profile:costProfile,target_key:targetKey});

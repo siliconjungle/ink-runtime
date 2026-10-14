@@ -384,7 +384,7 @@ export async function loadInk(
     const constants=p.constants.map(c=>Object.hasOwn(c,'javascript')?c.javascript:(c.javascript=javascriptInput(c.words,c.type)));
     let inputs=new Map([...p.inputs].map(([name,ref])=>[name,constants[ref.index]]));
     const values=[],receipts=[],counters={upload_bytes:0,readback_bytes:0,dispatches:0,live_buffer_bytes:0,resident_copy_bytes:0};
-    const identity=JSON.stringify([manifest.core_sha256,manifest.cpu_c_sha256,manifest.javascript_sha256]);
+    const identity=JSON.stringify([manifest.core_sha256,manifest.cpu_rust_sha256,manifest.javascript_sha256]);
     for(let iteration=0;iteration<p.iterations;iteration++) {
       // The partition covers source order, while independent partitions may
       // run concurrently on workers. Shared main Wasm/device adapters retain
