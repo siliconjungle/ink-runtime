@@ -595,7 +595,7 @@ export async function loadInk(
       const guard=()=>{if(closed)fail('Ink runtime is closed');if(ended)fail('session closed');};
       const session={
         backend:name,reason,profile:decision,
-        counters:{upload_bytes:state.gpu?state.gpu.A.upload:0},
+        counters:{upload_bytes:state.gpu?state.gpu.A.upload:0,get live_buffer_bytes(){return state.gpu?state.gpu.A.live:null;},get peak_buffer_bytes(){return state.gpu?state.gpu.A.peak:null;}},
         get iteration(){return state.gpu?.iteration??state.cpu?.iteration??0;},
         // Run more iterations. Nothing is read back; GPU work is submitted
         // and may still be executing when this resolves (see finish).

@@ -206,8 +206,12 @@ device readiness and the preparation of every required shader. Warm evidence
 cannot select a cold backend: missing comparable startup evidence retains CPU.
 The harness records warm sessions and separate `cold-train`/`cold-test` sessions
 on fresh engines; cold timings include backend and shader startup in `open`.
-The common `loadInk` import is outside both measurements. No memory-profitability
-claim follows from these timing models.
+The common `loadInk` import is outside both measurements. Mixed CPU-warm/GPU-cold
+and CPU-cold/GPU-warm cases have their own contexts and measurements. Resident
+session counters expose live and peak allocated GPU buffer bytes, including
+readback staging; CPU memory is reported as unknown (`null`). These counters
+exclude host copies and driver allocations. No memory-profitability claim
+follows from these timing models.
 Backend selectors retain at most 128 decisions for identical eligible backends,
 compiled scopes, observation boundaries and workload features. Options are copied
 when the selector is created, request inputs are captured before asynchronous
