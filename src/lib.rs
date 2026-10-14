@@ -120,10 +120,11 @@ fn assemble(
     if compute {
         put(dir, "prepared-wasm.mjs", include_str!("../hosts/prepared-wasm.mjs"))?;
         put(dir, "pipeline-profile.mjs", include_str!("../hosts/pipeline-profile.mjs"))?;
-        put(dir, "pipeline-contract.mjs", include_str!("../hosts/pipeline-contract.mjs"))?;
         put(dir, "pipeline-workers.mjs", include_str!("../hosts/pipeline-workers.mjs"))?;
         put(dir, "pipeline-worker.mjs", include_str!("../hosts/pipeline-worker.mjs"))?;
     }
+    // The shared selector imports pipeline scopes for both scalar and packed hosts.
+    put(dir, "pipeline-contract.mjs", include_str!("../hosts/pipeline-contract.mjs"))?;
     put(dir, "usage-profile.mjs", include_str!("../hosts/usage-profile.mjs"))?;
     put(dir, "ink-selection.mjs", ink_abi::SELECTION_JS_SOURCE)?;
     put(dir, "ink-selection.wasm", ink_abi::SELECTION_WASM)?;
