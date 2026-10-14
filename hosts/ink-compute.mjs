@@ -575,7 +575,7 @@ export async function loadInk(
       if(closed)fail('Ink runtime is closed');
       let state=null,reason,decision=null,choice=backend;
       if(backend==='auto'){
-        const context=await sessionContext(manifest,p,forecast,dispatchCount(p));
+        const context=await sessionContext(manifest,p,forecast,dispatchCount(p),{cpu:!!cpu,gpu:adapter.preparation(p)});
         decision=await selector.choose(['cpu',...(!p.reason&&gpu&&!gpuFailed?['gpu']:[])],context);
         choice=decision.backend;reason=decision.reason;
       }
@@ -636,7 +636,7 @@ export async function loadInk(
       try{
         if(closed)fail('Ink runtime is closed');
         const p=compilePlan(plan,functions,false),forecast=sessionWorkload(workload);
-        return sessionContext(manifest,p,forecast,dispatchCount(p));
+        return sessionContext(manifest,p,forecast,dispatchCount(p),{cpu:!!cpu,gpu:adapter.preparation(p)});
       }catch(error){return Promise.reject(error);}
     },
     describePipeline: plan => {

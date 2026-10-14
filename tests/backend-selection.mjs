@@ -82,6 +82,20 @@ function sessionPlan(){
   steps:[{id:'updated',f:{name:'update'},args:[{input:'rows',kind:'constant',index:0}],count:100}],
   ids:new Map([['updated',0]]),outputs:['updated'],feedback:new Map([['rows',0]]),iterations:999};
 }
+test('resident profiles never transfer warm costs to cold CPU, device or shaders',async()=>{
+ const p=sessionPlan(),workload=sessionWorkload({iterations:32});
+ const warm={cpu:true,gpu:{device:true,shaders:[['update',true]]}};
+ const context=preparation=>sessionContext(sessionManifest,p,workload,1,preparation);
+ const measured=await context(warm);
+ const profile={schema:1,target_key:'warm-device',models:{[measured.scope]:{boundary:measured.boundary,domains:{iterations:[1,32]},backends:{cpu:{intercept_ns:100,terms:{}},gpu:{intercept_ns:1,terms:{}}}}}};
+ const selector=createSelector({costProfile:profile,targetKey:'warm-device'});
+ assert.equal((await selector.choose(['cpu','gpu'],measured)).backend,'gpu');
+ for(const preparation of [null,{...warm,cpu:false},{cpu:true,gpu:{device:false,shaders:[['update',false]]}},{cpu:true,gpu:{device:true,shaders:[['update',false]]}}]){
+  const changed=await context(preparation);assert.notEqual(changed.scope,measured.scope);
+  assert.equal((await selector.choose(['cpu','gpu'],changed)).backend,'cpu');
+ }
+ assert.equal((await selector.choose(['cpu','gpu'],await context(warm))).backend,'gpu');
+});
 test('resident lifecycle costs charge setup once and steps and complete reads explicitly',async()=>{
  const p=sessionPlan(),short=await sessionContext(sessionManifest,p,sessionWorkload({iterations:1}),1),long=await sessionContext(sessionManifest,p,sessionWorkload({iterations:32}),1);
  assert.equal(short.scope,long.scope);assert.equal(short.features.input_bytes,400);
