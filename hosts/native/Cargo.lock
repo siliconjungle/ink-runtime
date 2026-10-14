@@ -326,8 +326,10 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-abi?rev=b794d162b3e3770640d96516f9b640c11448cfbe#b794d162b3e3770640d96516f9b640c11448cfbe"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=5c74c999f0852fe9f582311401f0d51905044356#5c74c999f0852fe9f582311401f0d51905044356"
 dependencies = [
+ "num-bigint",
+ "num-traits",
  "serde",
  "serde_json",
  "sha2",
