@@ -97,7 +97,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-c"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=b091c71b41b29edc434e7c166dabefa4025fa485#b091c71b41b29edc434e7c166dabefa4025fa485"
+source = "git+https://github.com/siliconjungle/ink-lowering-c?rev=cbc68ffa5a89a3473a93317d1ba14a1cdfc2b7e3#cbc68ffa5a89a3473a93317d1ba14a1cdfc2b7e3"
 dependencies = [
  "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=8ad066eaca7ed7d7876bb3ff88414b071013b554)",
  "ink-core",
@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=d10b518774a9e0bbb5da602199158e73c6bda825#d10b518774a9e0bbb5da602199158e73c6bda825"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=b66771176c278b796c2880e035d3fdf4978678e4#b66771176c278b796c2880e035d3fdf4978678e4"
 dependencies = [
  "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=8ad066eaca7ed7d7876bb3ff88414b071013b554)",
  "ink-core",
@@ -132,7 +132,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-rust"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=cd102951d70659aa5a3487a59d671cbfadd69500#cd102951d70659aa5a3487a59d671cbfadd69500"
+source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=900f3943d4fe0763fbf9fd8091c2de556ca3eb0f#900f3943d4fe0763fbf9fd8091c2de556ca3eb0f"
 dependencies = [
  "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=8ad066eaca7ed7d7876bb3ff88414b071013b554)",
  "ink-core",
@@ -146,7 +146,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=b64f026d01f324eb22eceb3219d890e0f5d430d6#b64f026d01f324eb22eceb3219d890e0f5d430d6"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=9f8c01a7c149793f7b412a2058c65ae5e8398365#9f8c01a7c149793f7b412a2058c65ae5e8398365"
 dependencies = [
  "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=8ad066eaca7ed7d7876bb3ff88414b071013b554)",
  "ink-core",
