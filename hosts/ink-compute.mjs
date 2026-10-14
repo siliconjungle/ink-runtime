@@ -219,7 +219,7 @@ export async function loadInk(
     try{workers=createWorkerPool(root,parallelism,{timeoutMs:workerTimeoutMs});}catch{return null}
     return workers;
   }
-  const adapter=createDevice({root, enabled:gpu, device, onLost:()=>{gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,MAX_BYTES});
+  const adapter=createDevice({root, enabled:gpu, device, onLost:()=>{if(closed)return;gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,MAX_BYTES});
   function cpuCall(f, args, consume) {
     if(f.precondition && !cpuCall(f.precondition,args,data=>data.words[0]===1))fail('contract precondition failed');
     cpu.ink_compute_reset();
@@ -722,7 +722,8 @@ export async function loadInk(
       serial(() => {
         closed=true;
         adapter.close();
-        selector.clear();
+        // Shared immutable decision encodings own no device or execution state.
+        // Keep them available to a later engine with the exact same inputs.
         placement?.selector.clear();workers?.close();
       }),
   };

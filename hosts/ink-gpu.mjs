@@ -34,7 +34,7 @@ export async function loadInk(base,options={}){
   const selector=createSelector(options);
   const jsStart=now();const javascript=await import(new URL("program.mjs",baseURL));const jsStartup=now()-jsStart;
   const javascriptFunctions=new Map(manifest.functions.map(f=>[f.name,javascript.functions[f.name]]));
-  const adapter=createDevice({asset,onLost:()=>selector.clear()});
+  const adapter=createDevice({asset,onLost:()=>{if(!closed)selector.clear()}});
   function cpu(f,args){
     instance.exports.ink_compute_reset();
     try {
@@ -69,6 +69,6 @@ export async function loadInk(base,options={}){
     capture(name,args){const f=functions.get(name);if(!f)throw Error(`unknown function ${name}`);return argumentsFor(f,args);},
     run(name,args,selection=backend){const f=functions.get(name);if(!f)return Promise.reject(Error(`unknown function ${name}`));let validated;try{if(!['auto','cpu','javascript','gpu','gpu-required'].includes(selection))throw Error('backend must be auto, cpu, javascript or gpu');validated=selection==='javascript'?args:argumentsFor(f,args);}catch(e){return Promise.reject(e);}
       const pending=serial.then(()=>run(f,validated,selection));serial=pending.catch(()=>{});return pending;},
-    async close(){await serial;closed=true;adapter.close();selector.clear();},
+    async close(){await serial;closed=true;adapter.close();},
   };
 }

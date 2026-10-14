@@ -129,3 +129,30 @@ test('session workload forecasts are bounded, copied, and do not accept unsuppor
  const original={iterations:32},copied=sessionWorkload(original);original.iterations=1;
  assert.equal(copied.iterations,32);assert.equal(sessionWorkload(null),null);
 });
+
+test('separate selectors reuse only complete immutable decision inputs',async()=>{
+ const context={scope:'kernel',boundary:'captured-owned',features:{input_elements:1000,input_bytes:4000}};
+ const first=createSelector({costProfile:structuredClone(costProfile),targetKey:'test-device'});
+ const expected=await first.choose(['cpu','gpu'],context);assert.equal(expected.backend,'gpu');
+ expected.cost_ns.cpu=-1;expected.reason='caller-owned mutation';
+ const second=createSelector({costProfile:structuredClone(costProfile),targetKey:'test-device'});
+ const repeated=await second.choose(['cpu','gpu'],context);
+ assert.equal(repeated.backend,'gpu');assert.equal(repeated.cost_ns.cpu,10100);assert.notEqual(repeated.reason,expected.reason);
+ const changed=structuredClone(costProfile);changed.models.kernel.backends.gpu.intercept_ns=1e12;
+ assert.equal((await createSelector({costProfile:changed,targetKey:'test-device'}).choose(['cpu','gpu'],context)).backend,'cpu');
+ assert.equal((await second.choose(['cpu'],context)).backend,'cpu');
+ assert.equal((await second.choose(['cpu','gpu'],{...context,scope:'unmeasured'})).backend,'cpu');
+ await assert.rejects(createSelector({costProfile,targetKey:'different-target'}).choose(['cpu','gpu'],context),/target/);
+ await assert.rejects(createSelector({costProfile,targetKey:'test-device',policy:'probe'}).choose(['cpu','gpu'],context),/policy/);
+ // Eviction and explicit clearing may add checks, never change the decision.
+ for(let i=0;i<270;i++){
+  const p=structuredClone(costProfile);p.models.kernel.backends.gpu.intercept_ns=i*100;
+  const result=await createSelector({costProfile:p,targetKey:'test-device'}).choose(['cpu','gpu'],context);
+  assert.equal(result.backend,i*100+1000<10100*.9?'gpu':'cpu');
+ }
+ first.clear();assert.equal((await second.choose(['cpu','gpu'],context)).backend,'gpu');
+ const mutation={...context,features:{input_elements:1,input_bytes:4}};
+ const pending=createSelector({costProfile,targetKey:'test-device'}).choose(['cpu','gpu'],mutation);
+ mutation.features.input_elements=1000;mutation.features.input_bytes=4000;
+ assert.equal((await pending).backend,'cpu');
+});

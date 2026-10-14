@@ -4,26 +4,52 @@ import {pipelineScope} from './pipeline-contract.mjs';
 export async function workloadFeatures(workload){return selectionRequest({operation:'features',workload});}
 export function profileScope(manifest,entry){return JSON.stringify([manifest.core_sha256,manifest.cpu_rust_sha256,manifest.javascript_sha256,entry]);}
 export async function validateCostProfile(profile,targetKey){await selectionRequest({operation:'validate',profile,target_key:targetKey});return profile==null?null:structuredClone(profile);}
+// The shared ABI decision is a pure function of these complete JSON inputs.
+// Reuse across engines avoids resending an identical profile. No object identity,
+// profile name, predicted cost, or partial workload key can establish a hit.
+// Bound retained encodings as well as entry count; returned objects never alias.
+const decisionGroups=new Map();
+const MAX_DECISION_BYTES=8_000_000,MAX_DECISIONS=256;
+let decisionBytes=0,decisionCount=0;
+function forgetDecisions(optionsKey){
+ const group=decisionGroups.get(optionsKey);if(!group)return;
+ decisionBytes-=group.bytes;decisionCount-=group.values.size;decisionGroups.delete(optionsKey);
+}
+function cachedDecision(optionsKey,key){
+ const group=decisionGroups.get(optionsKey);if(!group)return;
+ const result=group.values.get(key);if(result===undefined)return;
+ // Refresh the group's recency without changing any decision input.
+ decisionGroups.delete(optionsKey);decisionGroups.set(optionsKey,group);return result;
+}
+function rememberDecision(optionsKey,key,result){
+ const size=2*(key.length+result.length),header=2*optionsKey.length;
+ if(size+header>MAX_DECISION_BYTES)return;
+ let group=decisionGroups.get(optionsKey);
+ if(group?.values.has(key))return;
+ while(decisionGroups.size&&(decisionCount>=MAX_DECISIONS||decisionBytes+size+(group?0:header)>MAX_DECISION_BYTES)){
+  forgetDecisions(decisionGroups.keys().next().value);group=decisionGroups.get(optionsKey);
+ }
+ if(!group){group={bytes:header,values:new Map()};decisionGroups.set(optionsKey,group);decisionBytes+=header;}
+ group.values.set(key,result);group.bytes+=size;decisionBytes+=size;decisionCount++;
+}
+
 export function createSelector({policy='adaptive',staticBackend='cpu',costProfile=null,targetKey=''}={}){
  const options=structuredClone({policy,static_backend:staticBackend,cost_profile:costProfile,target_key:targetKey});
- // Options are private and immutable. Reuse only the exact decision inputs;
- // changed eligibility, evidence boundary or workload gets a fresh ABI check.
- // Keep caller-owned results separate from the bounded cache.
- const decisions=new Map();
+ // Snapshot caller options once. Serialization is lazy, preserving constructor
+ // behaviour and counting first-use profile preparation in the first decision.
+ let optionsKey;
  const choose=async(eligible,context={})=>{
   const key=JSON.stringify({eligible,context});
-  if(decisions.has(key))return JSON.parse(decisions.get(key));
+  optionsKey??=JSON.stringify(options);
+  const cached=cachedDecision(optionsKey,key);if(cached!==undefined)return JSON.parse(cached);
   // Capture before the Wasm loader can yield; caller mutation must not bind
   // a result for a different workload under the earlier key.
   const decision=await selectionRequest({options,...JSON.parse(key)});
-  if(decisions.size>=128)decisions.delete(decisions.keys().next().value);
-  // ABI responses are JSON values. Retaining their encoding provides fresh
-  // nested ownership on a hit without cloning the entire response graph.
-  decisions.set(key,JSON.stringify(decision));return decision;
+  rememberDecision(optionsKey,key,JSON.stringify(decision));return decision;
  };
  return {
   choose,
-  clear(){decisions.clear();},
+  clear(){if(optionsKey!==undefined)forgetDecisions(optionsKey);},
   async run(key,candidates,selection='auto',context={}){
    const required=selection==='gpu-required';if(required)selection='gpu';
    const baseline=candidates.find(c=>c.name==='cpu');if(!baseline)throw Error('compiled CPU baseline required');
