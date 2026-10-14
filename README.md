@@ -201,8 +201,13 @@ fallback, except for `gpu-required`.
 `bench/gpu/resident-profile-browser.mjs` in the distribution checks independent
 complete outputs on an actual browser adapter. Training and held-out runs use
 different sizes and iteration horizons. Timings cover the complete lifecycle;
-step-only timings are retained separately. Engine loading is outside these warm
-session measurements, and no memory-profitability claim follows from them.
+step-only timings are retained separately. Profiles bind CPU initialization,
+device readiness and the preparation of every required shader. Warm evidence
+cannot select a cold backend: missing comparable startup evidence retains CPU.
+The harness records warm sessions and separate `cold-train`/`cold-test` sessions
+on fresh engines; cold timings include backend and shader startup in `open`.
+The common `loadInk` import is outside both measurements. No memory-profitability
+claim follows from these timing models.
 Backend selectors retain at most 128 decisions for identical eligible backends,
 compiled scopes, observation boundaries and workload features. Options are copied
 when the selector is created, request inputs are captured before asynchronous
