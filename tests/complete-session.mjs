@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {completeSession} from '../hosts/complete-session.mjs';
-import {prepareCostProfile} from '../hosts/backend-selection.mjs';
+// Generated ABI assets must exist before Node resolves the host module graph.
+await import('./shared-host-assets.mjs');
+const {completeSession}=await import('../hosts/complete-session.mjs');
+const {prepareCostProfile}=await import('../hosts/backend-selection.mjs');
 
 function fixture(failure){
  const events=[],context={scope:'engine',boundary:'captured-owned',features:{iterations:3}};
