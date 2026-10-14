@@ -127,7 +127,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=94836ffa0fea007cf146be8e100a6fe91ac6afab#94836ffa0fea007cf146be8e100a6fe91ac6afab"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=1ac20047cb95fb042d45303b2a93997a89ecc06e#1ac20047cb95fb042d45303b2a93997a89ecc06e"
 dependencies = [
  "ink-abi",
  "ink-core",
