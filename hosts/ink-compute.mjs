@@ -1,7 +1,7 @@
 import {width,pack,unpack} from "./ink-abi.mjs";
 import * as deviceLowering from "./ink-device.mjs";
 const {createDevice,dispatchCount,fieldPath,reducible,decodeComponents,combineWords,lanes} = deviceLowering;
-import {createSelector,profileScope,workloadFeatures} from "./backend-selection.mjs";
+import {createSelector,profileScope,workloadFeatures,sessionWorkload,sessionContext} from "./backend-selection.mjs";
 import {pipelineScope,segmentOutputs,segmentContexts,placementBackends} from './pipeline-contract.mjs';
 import {createPackedCall} from "./prepared-wasm.mjs";
 // Trusted values ABI: caller supplies correctly typed, stable arguments.
@@ -562,22 +562,28 @@ export async function loadInk(
   // on the device across step, read and write calls. No iteration runs until
   // step. When the GPU cannot run the plan, the session runs on the compiled
   // CPU with the same semantics.
-  function openSession(plan, {backend='auto'}={}) {
-    let p;
+  function openSession(plan, {backend='auto',workload=null}={}) {
+    let p,forecast;
     try {
       if(closed)fail('Ink runtime is closed');
       if(!['auto','gpu','gpu-required','cpu'].includes(backend))fail('sessions run on auto, gpu, gpu-required or cpu');
       p=compilePlan(plan,functions,false);
+      forecast=sessionWorkload(workload);
       if(backend==='gpu-required'&&p.reason)fail(p.reason);
     } catch(error){return Promise.reject(error);}
     return serial(async()=>{
       if(closed)fail('Ink runtime is closed');
-      let state=null,reason;
-      if(backend==='cpu'||p.reason)reason=backend==='cpu'?'explicit CPU selection':p.reason;
+      let state=null,reason,decision=null,choice=backend;
+      if(backend==='auto'){
+        const context=await sessionContext(manifest,p,forecast,dispatchCount(p));
+        decision=await selector.choose(['cpu',...(!p.reason&&gpu&&!gpuFailed?['gpu']:[])],context);
+        choice=decision.backend;reason=decision.reason;
+      }
+      if(choice==='cpu'||p.reason)reason=reason??(choice==='cpu'?'explicit CPU selection':p.reason);
       else if(!gpu||gpuFailed){if(backend==='gpu-required')fail('GPU unavailable');reason='GPU unavailable';}
       else try {
         await adapter.prepare(p);gpuWarm=true;
-        state={gpu:await adapter.open(p)};reason='resident GPU session';
+        state={gpu:await adapter.open(p)};reason=reason??'explicit resident GPU session';
       } catch(error) {
         if(backend==='gpu-required')throw error;
         if(!/limit|budget|shape|non-finite/i.test(String(error)))gpuFailed=true;
@@ -588,7 +594,7 @@ export async function loadInk(
       const name=state.gpu?'gpu':'cpu';
       const guard=()=>{if(closed)fail('Ink runtime is closed');if(ended)fail('session closed');};
       const session={
-        backend:name,reason,
+        backend:name,reason,profile:decision,
         counters:{upload_bytes:state.gpu?state.gpu.A.upload:0},
         get iteration(){return state.gpu?.iteration??state.cpu?.iteration??0;},
         // Run more iterations. Nothing is read back; GPU work is submitted
@@ -626,6 +632,13 @@ export async function loadInk(
   }
   const runtime = {
     manifest,
+    describeSession: (plan,workload) => {
+      try{
+        if(closed)fail('Ink runtime is closed');
+        const p=compilePlan(plan,functions,false),forecast=sessionWorkload(workload);
+        return sessionContext(manifest,p,forecast,dispatchCount(p));
+      }catch(error){return Promise.reject(error);}
+    },
     describePipeline: plan => {
       let prepared;try{if(closed)fail('Ink runtime is closed');prepared=compilePlan(plan,functions,false);}catch(error){return Promise.reject(error)}
       return Promise.resolve(segmentContexts(manifest,prepared));

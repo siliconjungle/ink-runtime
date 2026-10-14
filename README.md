@@ -176,3 +176,36 @@ indices; schema identity and bounded codec checks establish value compatibility.
 Actions retain their checked transaction interfaces. Wasm input/output currently
 copy across instance memory, and compiled calls materialize target values. No
 network protocol or profitability rule is introduced by this transport support.
+
+### Profiled resident sessions
+
+`await engine.describeSession(plan, {iterations:32, readbacks:1})` returns the
+scope, boundary and workload features for an expected complete session:
+open/capture/upload, 32 iterations, completion, one full owned output read and
+close. `engine.open(plan, {workload:{iterations:32, readbacks:1}})` uses that
+context with the shared saved-profile decision contract. The forecast is a cost
+hint, not a correctness assumption or restriction on later session operations.
+If actual usage includes writes or partial reads, this model is not comparable;
+omit the forecast or use an explicit backend until that lifecycle is measured.
+
+The scope binds compiled host/shader identity, topology, input slots, output
+identities, simultaneous feedback and full-readback count. It is distinct from
+single-call and prepared-input profiles. `plan.iterations` is not a forecast of
+future `session.step` calls. An unknown horizon or absent/out-of-domain profile
+retains the compiled CPU baseline; automatic sessions previously preferred GPU
+without consulting cost evidence. Explicit `gpu`/`gpu-required` remain available,
+and applications that require `session.buffer()` must explicitly require GPU.
+There are no runtime timing probes. A device failure retains the existing CPU
+fallback, except for `gpu-required`.
+
+`bench/gpu/resident-profile-browser.mjs` in the distribution checks independent
+complete outputs on an actual browser adapter. Training and held-out runs use
+different sizes and iteration horizons. Timings cover the complete lifecycle;
+step-only timings are retained separately. Engine loading is outside these warm
+session measurements, and no memory-profitability claim follows from them.
+Backend selectors retain at most 128 decisions for identical eligible backends,
+compiled scopes, observation boundaries and workload features. Options are copied
+when the selector is created, request inputs are captured before asynchronous
+loading, and returned decisions never share mutable objects with the cache.
+`clear()` discards these decisions. This memoizes the shared ABI decision; it does
+not measure execution, cache program results or allow out-of-domain evidence.

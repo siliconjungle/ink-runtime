@@ -52,5 +52,66 @@ test('required GPU execution never invokes a CPU fallback',async()=>{
  assert.equal((await selector.run('working',[cpu,{name:'gpu',run:()=>7}],'gpu-required')).backend,'gpu');
 });
 
+test('reused decisions preserve private ownership and recheck changed eligibility and boundaries',async()=>{
+ const selector=createSelector({costProfile,targetKey:'test-device'});
+ const context={scope:'kernel',boundary:'captured-owned',features:{input_elements:1000,input_bytes:4000}};
+ const first=await selector.choose(['cpu','gpu'],context);assert.equal(first.backend,'gpu');
+ first.backend='javascript';first.reason='caller mutation';
+ assert.equal((await selector.choose(['cpu','gpu'],context)).backend,'gpu');
+ assert.equal((await selector.choose(['cpu'],context)).backend,'cpu');
+ assert.equal((await selector.choose(['cpu','gpu'],{...context,boundary:'resident-input-owned-readback'})).backend,'cpu');
+ for(let i=0;i<130;i++)await selector.choose(['cpu','gpu'],{...context,scope:'other-'+i});
+ assert.equal((await selector.choose(['cpu','gpu'],context)).backend,'gpu');
+ selector.clear();assert.equal((await selector.choose(['cpu','gpu'],context)).backend,'gpu');
+ await assert.rejects(selector.choose(['gpu'],context),/CPU baseline/);
+ const changing={...context,features:{input_elements:1,input_bytes:4}},eligible=['cpu','gpu'];
+ const pending=selector.choose(eligible,changing);
+ changing.features.input_elements=1000;changing.features.input_bytes=4000;eligible.pop();
+ assert.equal((await pending).backend,'cpu');
+ assert.equal((await selector.choose(['cpu','gpu'],{...context,features:{input_elements:1,input_bytes:4}})).backend,'cpu');
+});
+
 // Adaptive state uses the same native/Wasm decision boundary.
 import './adaptive-state.mjs';
+
+const {sessionWorkload,sessionContext}=await import('../hosts/backend-selection.mjs');
+const sessionManifest={core_sha256:'core',cpu_c_sha256:'cpu',javascript_sha256:'js',runtime_host_sha256:'host',shaders:['shader']};
+function sessionPlan(){
+ const type={kind:'list',element:{kind:'u32'}};
+ return {constants:[{type,count:100,words:new Uint32Array(100)}],inputs:new Map([['rows',{index:0}]]),
+  steps:[{id:'updated',f:{name:'update'},args:[{input:'rows',kind:'constant',index:0}],count:100}],
+  ids:new Map([['updated',0]]),outputs:['updated'],feedback:new Map([['rows',0]]),iterations:999};
+}
+test('resident lifecycle costs charge setup once and steps and complete reads explicitly',async()=>{
+ const p=sessionPlan(),short=await sessionContext(sessionManifest,p,sessionWorkload({iterations:1}),1),long=await sessionContext(sessionManifest,p,sessionWorkload({iterations:32}),1);
+ assert.equal(short.scope,long.scope);assert.equal(short.features.input_bytes,400);
+ assert.equal(long.features.input_bytes,400);assert.equal(long.features.dispatches,32);
+ assert.equal(long.features.output_capacity_elements,100);assert.equal(long.features.iterations,32);
+ const reads=await sessionContext(sessionManifest,p,sessionWorkload({iterations:32,readbacks:3}),1);
+ assert.equal(reads.features.output_capacity_elements,300);assert.notEqual(reads.scope,long.scope);
+ const profile={schema:1,target_key:'session-device',models:{[short.scope]:{boundary:short.boundary,domains:{iterations:[1,32]},backends:{cpu:{intercept_ns:10,terms:{iterations:100}},gpu:{intercept_ns:1000,terms:{iterations:1}}}}}};
+ const selector=createSelector({costProfile:profile,targetKey:'session-device'});
+ assert.equal((await selector.choose(['cpu','gpu'],short)).backend,'cpu');
+ assert.equal((await selector.choose(['cpu','gpu'],long)).backend,'gpu');
+ assert.equal((await selector.choose(['cpu','gpu'],reads)).backend,'cpu');
+ assert.equal((await selector.choose(['cpu','gpu'],await sessionContext(sessionManifest,p,null,1))).backend,'cpu');
+ const outside=await sessionContext(sessionManifest,p,sessionWorkload({iterations:33}),1);
+ assert.equal((await selector.choose(['cpu','gpu'],outside)).backend,'cpu');
+});
+test('session evidence binds feedback, output identity, input binding and compiled host',async()=>{
+ const context=async(p,m=sessionManifest)=>sessionContext(m,p,sessionWorkload({iterations:32}),1);
+ const original=await context(sessionPlan());
+ for(const mutate of [p=>p.feedback.clear(),p=>p.inputs.set('rows',{index:1}),p=>p.steps[0].id='other']){
+  const p=sessionPlan();mutate(p);assert.notEqual((await context(p)).scope,original.scope);
+ }
+ assert.notEqual((await context(sessionPlan(),{...sessionManifest,runtime_host_sha256:'changed'})).scope,original.scope);
+ const p=sessionPlan();p.iterations=1;assert.equal((await context(p)).scope,original.scope);
+ const ordinary={schema:1,target_key:'session-device',models:{kernel:{boundary:'captured-owned',domains:{},backends:{cpu:{intercept_ns:100,terms:{}},gpu:{intercept_ns:1,terms:{}}}}}};
+ assert.equal((await createSelector({costProfile:ordinary,targetKey:'session-device'}).choose(['cpu','gpu'],original)).backend,'cpu');
+});
+test('session workload forecasts are bounded, copied, and do not accept unsupported writes',()=>{
+ for(const value of [{},{iterations:0},{iterations:true},{iterations:1.5},{iterations:1_000_001},{iterations:32,readbacks:-1},{iterations:32,readbacks:true},{iterations:32,writes:1},[]])assert.throws(()=>sessionWorkload(value),/session workload/);
+ assert.deepEqual(sessionWorkload({iterations:32,readbacks:0}),{iterations:32,readbacks:0});
+ const original={iterations:32},copied=sessionWorkload(original);original.iterations=1;
+ assert.equal(copied.iterations,32);assert.equal(sessionWorkload(null),null);
+});

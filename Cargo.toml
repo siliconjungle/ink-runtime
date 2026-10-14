@@ -6,7 +6,7 @@ edition = "2021"
 publish = false
 [dependencies]
 ink-native-support = { git = "https://github.com/siliconjungle/ink-native-support", rev = "632c95be5ee7c91faf71d4e14588c5f7def4d426" }
-ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "b7c883b4b17db6ae5d1d8b4f27caf137500d30a0" }
+ink-abi = { git = "https://github.com/siliconjungle/ink-abi", rev = "5767db2302244ca879b4f7ea998f2954d6f141e5" }
 ink-core = { git = "https://github.com/siliconjungle/ink-lang", rev = "d81938796e4b700a8bbb35ef021d5890f324d299" }
 ink-lowering-c = { git = "https://github.com/siliconjungle/ink-lowering-c", rev = "8a2ea45d2a16ac5544a83b34897ae9f268f50a86" }
 ink-lowering-gpu = { git = "https://github.com/siliconjungle/ink-lowering-gpu", rev = "f937fb97e47dbf3ce7ed713d7e78cb98fbd59291" }
