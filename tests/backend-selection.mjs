@@ -75,7 +75,7 @@ test('reused decisions preserve private ownership and recheck changed eligibilit
 import './adaptive-state.mjs';
 
 const {sessionWorkload,sessionContext}=await import('../hosts/backend-selection.mjs');
-const sessionManifest={core_sha256:'core',cpu_c_sha256:'cpu',javascript_sha256:'js',runtime_host_sha256:'host',shaders:['shader']};
+const sessionManifest={core_sha256:'core',cpu_rust_sha256:'cpu',javascript_sha256:'js',runtime_host_sha256:'host',shaders:['shader']};
 function sessionPlan(){
  const type={kind:'list',element:{kind:'u32'}};
  return {constants:[{type,count:100,words:new Uint32Array(100)}],inputs:new Map([['rows',{index:0}]]),
