@@ -12,7 +12,7 @@ export async function loadAdaptiveState(url,options={}){
  const bundle=JSON.parse(new TextDecoder().decode(bytes));
  if(bundle.schema!==1||bundle.kind!=='ink-adaptive-state-v1'||!Array.isArray(bundle.artifacts)||bundle.artifacts.length>16)throw Error('adaptive bundle schema');
  if(options.targetKey!==bundle.binding.target)throw Error('adaptive target provenance mismatch');
- const variants={};
+ const variants=Object.create(null);
  for(const a of bundle.artifacts){
   if(!/^[a-zA-Z0-9_-]+\.mjs$/.test(a.file)||Object.hasOwn(variants,a.id))throw Error('adaptive artifact path/identity');
   const path=new URL(a.file,url);if(await digest(await read(path))!==bundle.binding.variants[a.id])throw Error('adaptive artifact identity');
