@@ -102,6 +102,7 @@ fn closure(p: &Program, name: &str) -> LangResult<CheckedModule> {
     sub.ids.retain(|n| types.contains(n));
     sub.enums.retain(|n, _| types.contains(n));
     sub.states.clear();
+    sub.frozen.clear();
     sub.actions.clear();
     sub.keeps.clear();
     sub.events.clear();
