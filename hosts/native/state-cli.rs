@@ -50,7 +50,13 @@ impl Instance {
     }
 }
 fn run_with_pure(
-    mut pure: impl FnMut(&mut Instance, &Value) -> Result<Value, String>,
+    pure: impl FnMut(&mut Instance, &Value) -> Result<Value, String>,
+) -> Result<(), String> {
+    run_with_pure_initialized(||Ok(State::new()),pure)
+}
+fn run_with_pure_initialized(
+    create:impl FnOnce()->Result<State,String>,
+    mut pure:impl FnMut(&mut Instance,&Value)->Result<Value,String>,
 ) -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let file = args.next().ok_or("expected SCRIPT.json")?;
@@ -78,12 +84,12 @@ fn run_with_pure(
         return Err("durable histories cannot replace committed state with a restore step".into());
     }
     let mut state = if let Some(path) = durable {
-        Instance::Durable(Host::open(FileStore::open(path)?, 256)?)
+        Instance::Durable(Host::open_initialized(FileStore::open(path)?, 256,32,create)?)
     } else {
         Instance::Memory(if let Some(path) = restore {
             State::restore(&std::fs::read(path).map_err(|e| e.to_string())?)?
         } else {
-            State::new()
+            create()?
         })
     };
     let mut output = vec![];

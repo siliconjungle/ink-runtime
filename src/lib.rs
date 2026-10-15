@@ -250,6 +250,8 @@ pub fn write_adaptive_host(dir: &std::path::Path) -> LangResult<()> {
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
 pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {
+    fs::create_dir_all(dir).map_err(|e|e.to_string())?;
+    put(dir, "initial-state.mjs", INITIAL_STATE_HOST)?;
     put(dir, "scheduled-actions.mjs", include_str!("../hosts/scheduled-actions.mjs"))?;
     put(
         dir,
@@ -271,6 +273,19 @@ pub fn emit_native_state_host(dir: &Path) -> LangResult<()> {
     put(dir, "src/durable.rs", include_str!("durable.rs"))?;
     put(dir, "src/state-cli.rs", NATIVE_STATE_CLI)
 }
+/// A deployment seed is logical state, independently validated by State::restore.
+/// It is not a different source program or an optimization/equality certificate.
+pub fn emit_initial_state(dir:&Path,bytes:Option<&[u8]>)->LangResult<()> {
+    let code=if let Some(bytes)=bytes {
+        put(dir,"initial.snapshot",bytes)?;
+        "pub fn initial_state()->Result<State,String>{State::restore(include_bytes!(\"../initial.snapshot\"))}\n"
+    }else{
+        "pub fn initial_state()->Result<State,String>{Ok(State::new())}\n"
+    };
+    put(dir,"src/initial-state.rs",code)
+}
+pub const INITIAL_STATE_INCLUDE:&str="\ninclude!(\"initial-state.rs\");\n";
+pub const INITIAL_STATE_HOST:&str=include_str!("../hosts/initial-state.mjs");
 
 pub mod durable;
 pub mod execution;
@@ -291,7 +306,9 @@ pub fn emit_rust_program(code: &str, dir: &Path) -> LangResult<()> {
     code.push_str(STATE_WASM_ABI);
     if code.contains("pub const INK_WIRE_CONTRACT:"){code.push_str(ink_native_support::BINARY_EXPORTS_RUST_SOURCE);}
     code.push_str(NATIVE_STATE_ADAPTER);
+    code.push_str(INITIAL_STATE_INCLUDE);
     emit_native_state_host(dir)?;
+    emit_initial_state(dir,None)?;
     put(dir, "src/lib.rs", code)?;
     put(dir, "src/main.rs", COMPLETE_STATE_RUNNER)?;
     put(dir,"Cargo.toml","[package]\nname=\"compiled-state\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\ncrate-type=[\"rlib\",\"cdylib\",\"staticlib\"]\n[dependencies]\nnum-bigint=\"=0.4.8\"\nsha2=\"=0.10.9\"\nserde_json={version=\"=1.0.151\",features=[\"float_roundtrip\"]}\n[workspace]\n")?;

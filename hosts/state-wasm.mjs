@@ -75,6 +75,7 @@ export class AbiError extends Error {
   constructor(message,committed=false){super(message);this.name='AbiError';this.committed=committed;}
 }
 export class StatefulModule {
+  #initial;
   constructor(instance) {
     this.instance=instance;this.exports=instance.exports;this.trapped=false;
     if(this.exports.lang_abi_version?.()!==1)throw new AbiError('Unsupported stateful Wasm ABI');
@@ -89,7 +90,13 @@ export class StatefulModule {
     if(imports.some(i=>i.module!=='ink_parallel'||i.name!=='run'||i.kind!=='function'))throw new AbiError('Unsupported Wasm host import');
     const holder={host:null};
     const instance=await WebAssembly.instantiate(module,{ink_parallel:{run:(ptr,len)=>holder.host.runParallel(ptr,len)}});
-    const host=new StatefulModule(instance);host.compiled=module;host.parallelLeaf=options.leaf??false;host.workerCount=requested;host.parallelStats={dispatches:0,workers:0,workerIds:new Set(),lastWorkerIds:new Set()};holder.host=host;return host;
+    const host=new StatefulModule(instance);host.compiled=module;host.parallelLeaf=options.leaf??false;host.workerCount=requested;host.parallelStats={dispatches:0,workers:0,workerIds:new Set(),lastWorkerIds:new Set()};holder.host=host;
+    if(options.initialSnapshot!==undefined){
+      if(!(options.initialSnapshot instanceof Uint8Array)||options.initialSnapshot.length>64*1024*1024)throw new AbiError('Initial snapshot byte limit');
+      host.#initial=options.initialSnapshot.slice();
+      host.restore(host.#initial).dispose();
+    }
+    return host;
   }
   parallelStatistics(){return {...this.parallelStats,workerIds:[...this.parallelStats.workerIds],lastWorkerIds:[...this.parallelStats.lastWorkerIds]};}
   recordParallelStatistics(stats){this.parallelStats.lastWorkerIds=new Set(stats.lastWorkerIds);this.parallelStats.dispatches+=stats.dispatches;this.parallelStats.workers+=stats.workers;stats.workerIds.forEach(id=>this.parallelStats.workerIds.add(id));}
@@ -164,7 +171,8 @@ export class StatefulModule {
     if(!Object.hasOwn(message,'ok'))throw new AbiError('Malformed Wasm response');
     return message.ok;
   }
-  create() {const handle=this.call('lang_init')>>>0;if(!handle)throw this.error();return new StateInstance(this,handle);}
+  create() {return this.#initial?this.restore(this.#initial):this.createSourceState();}
+  createSourceState() {const handle=this.call('lang_init')>>>0;if(!handle)throw this.error();return new StateInstance(this,handle);}
   restore(bytes) {
     const buffer=this.input(bytes);
     try {const handle=this.call('lang_restore',buffer)>>>0;if(!handle)throw this.error();return new StateInstance(this,handle);}

@@ -315,3 +315,16 @@ fn journal_appends_receipts_without_checkpoints_and_recovers_torn_tails() {
     );
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn deployment_initializer_only_creates_empty_stores_and_errors_publish_nothing() {
+    let store=Memory::default();
+    let mut host=Host::open_initialized(store.clone(),8,2,||Ok(State{value:9,version:0,events:vec![]})).unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&host.checkpoint().unwrap()).unwrap()["value"],9);
+    host.invoke("one","add",&json!([2])).unwrap();drop(host);
+    let host=Host::<State,_>::open_initialized(store.clone(),8,2,||panic!("recovery must not reinitialize")).unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&host.checkpoint().unwrap()).unwrap()["value"],11);
+    let empty=Memory::default();
+    assert!(Host::<State,_>::open_initialized(empty.clone(),8,2,||Err("invalid deployment seed".into())).is_err());
+    assert!(empty.0.borrow().saved.is_none());
+}

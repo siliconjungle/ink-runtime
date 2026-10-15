@@ -1,11 +1,15 @@
 import {StatefulModule} from './state-wasm.mjs';
+import {readArtifact} from './initial-state.mjs';
 // Complete source module. State execution is never benchmarked speculatively.
 export async function loadInk(base,{gpu=true,backend='auto',...options}={}){
  const root=new URL(base,globalThis.location?.href??'http://localhost/');if(!root.pathname.endsWith('/'))root.pathname+='/';
  const manifest=await(await fetch(new URL('manifest.json',root))).json();
  const js=await import(new URL('program.mjs',root));
- const cpu=await StatefulModule.instantiate(new Uint8Array(await(await fetch(new URL(manifest.cpu,root))).arrayBuffer()));
- const pure=cpu.create(),parts=new Map();
+ const initialSnapshot=manifest.initial_state?await readArtifact(new URL(manifest.initial_state.file,root),manifest.initial_state):undefined;
+ const cpu=await StatefulModule.instantiate(new Uint8Array(await(await fetch(new URL(manifest.cpu,root))).arrayBuffer()),{initialSnapshot});
+ // Checked pure functions receive all data explicitly. Their invocation holder
+ // needs no copy of the application's deployed model, optimizer or event outbox.
+ const pure=cpu.createSourceState(),parts=new Map();
  async function part(f){if(!parts.has(f.name))parts.set(f.name,(async()=>{const url=new URL(f.bundle,root);const adapter=await import(new URL('ink-gpu.mjs',url));return adapter.loadInk(url,{gpu,backend,...options});})());return parts.get(f.name);}
  return {manifest,parallelStatistics:()=>({cpu:cpu.parallelStatistics(),javascript:js.parallelStatistics?.()}),createState:()=>cpu.create(),createJavaScriptState:()=>{if(!js.createState)throw Error('no state declarations');return js.createState();},restoreState:bytes=>cpu.restore(bytes),
   async call(name,args,{backend:chosen=backend,...callOptions}={}){

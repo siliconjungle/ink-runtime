@@ -415,10 +415,18 @@ impl<S: CompiledState, T: Store> Host<S, T> {
     }
     /// A checkpoint after this many operations bounds replay independently of table size.
     pub fn open_with_checkpoint_interval(
-        mut store: T,
+        store: T,
         limit: usize,
         checkpoint_interval: usize,
     ) -> Result<Self> {
+        Self::open_initialized(store,limit,checkpoint_interval,||Ok(S::create()))
+    }
+    /// Initialize an empty store from an explicit factory. Recovery never calls
+    /// the factory or replaces a published state with a deployment seed.
+    pub fn open_initialized(
+        mut store:T, limit:usize, checkpoint_interval:usize,
+        create:impl FnOnce()->Result<S>,
+    )->Result<Self> {
         if !(1..=4096).contains(&limit) {
             return Err("receipt retention must be 1..4096".into());
         }
@@ -438,7 +446,7 @@ impl<S: CompiledState, T: Store> Host<S, T> {
                 }
                 (state, saved_token, receipts, limit, frames.len())
             } else {
-                let state = S::create();
+                let state = create()?;
                 let token = store.commit(None, &encode(&state.checkpoint()?, &[], limit)?)?;
                 (state, token, vec![], limit, 0)
             };

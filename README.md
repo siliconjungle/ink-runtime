@@ -285,3 +285,30 @@ host's bounded retry-receipt retention. Run
 `node --test tests/scheduled-actions.mjs tests/durable-state.mjs` for lifecycle and
 failure checks. The distribution also tests a real compiled queued-learning
 application with exact reference checkpoints and offline CLI bootstrap.
+
+
+## Explicit deployment initialization
+
+Complete Rust projects now expose `initial_state()`. The default returns the
+original source state; `emit_initial_state(project, Some(checkpoint))` installs an
+embedded deployment checkpoint after independent source/typed validation in the
+distribution. Generated native runners use that factory. `Host::open_initialized`
+calls an explicit fallible factory only when storage is empty; recovery always
+uses the stored checkpoint/receipts. Failed factories publish nothing.
+
+`StatefulModule.instantiate(wasm,{initialSnapshot})` captures and validates private
+checkpoint bytes. `create()` restores that seed; `createSourceState()` explicitly
+constructs original source state. Pure-call holders use source state because their
+checked functions cannot observe deployed application data. Mixed `loadInk` hosts
+read a bound initial-state descriptor, restore CPU state and support an awaited
+initialized JavaScript factory. State transactions and learning remain on CPU.
+`initial-state.mjs` bounds/streams local or HTTP assets and checks their size/hash;
+compiled restore separately validates source/schema/invariants. This is integrity
+and startup machinery, not authenticity, equality or approximation authority.
+
+Generated-code compilation can use `INK_COMPILED_TARGET_DIR` outside a published
+package. An OS file lock spans both Cargo execution and output copying, preventing
+another same-named crate from replacing the shared result between those operations.
+Default builds keep their per-project target directories. The distribution's
+`build-model` captures dependency locks and hashes the package before publication;
+use locked builds and external caches to retain its integrity inventory.
