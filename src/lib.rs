@@ -250,6 +250,7 @@ pub fn write_adaptive_host(dir: &std::path::Path) -> LangResult<()> {
 pub const STATE_WASM_HOST: &str = include_str!("../hosts/state-wasm.mjs");
 
 pub fn emit_durable_hosts(dir: &Path) -> LangResult<()> {
+    put(dir, "scheduled-actions.mjs", include_str!("../hosts/scheduled-actions.mjs"))?;
     put(
         dir,
         "durable-state.mjs",

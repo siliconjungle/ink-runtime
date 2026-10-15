@@ -257,3 +257,31 @@ when the selector is created, request inputs are captured before asynchronous
 loading, and returned decisions never share mutable objects with the cache.
 `clear()` discards these decisions. This memoizes the shared ABI decision; it does
 not measure execution, cache program results or allow out-of-domain evidence.
+
+
+## Cooperative action scheduling
+
+`hosts/scheduled-actions.mjs` exports `ScheduledActions({host, plan, onResult,
+idleMs})` beside emitted durable hosts. `plan(host)` returns null (idle) or an
+explicit `{id,call,args,delayMs}`; the host invokes one compiled action and calls
+`onResult`. Queue contents, objective, model versions and bounded work/publication
+rules remain source code. This helper does not infer a learner or retry uncertain
+storage writes. Use it with `DurableState` to retain accepted action progress.
+
+`run({signal})` returns the service lifetime promise. `wake()` interrupts idle
+waiting; `pause()` waits for the current plan/action/callback, and `stop()` waits
+for shutdown. From a plan/result callback, use synchronous `setPaused(true)` or
+`requestStop()`; awaiting your own turn's quiescence would deadlock. `resume()`
+permits new work. A pending plan is invalidated by pause/stop; source version checks
+must independently reject stale candidates. Every turn yields to the event loop,
+even if a callback repeatedly wakes it. One synchronous compiled action can still
+block serving until it returns: enforce work limits in source. This is cooperative
+single-host execution, not parallel training or a real-time deadline guarantee.
+
+The service does not close its shared host. On an error it stops and rejects its
+lifetime promise; close/reopen an uncertain durable host before explicitly retrying.
+Observation identity/progress should live in source state, independently of the
+host's bounded retry-receipt retention. Run
+`node --test tests/scheduled-actions.mjs tests/durable-state.mjs` for lifecycle and
+failure checks. The distribution also tests a real compiled queued-learning
+application with exact reference checkpoints and offline CLI bootstrap.
