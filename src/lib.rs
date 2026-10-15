@@ -240,6 +240,7 @@ fn assemble(
 pub const STATE_WASM_ABI: &str = ink_native_support::STATE_EXPORTS_RUST_SOURCE;
 /// Emit opt-in state adaptation beside already checked compiled variants.
 pub fn write_adaptive_host(dir: &std::path::Path) -> LangResult<()> {
+    put(dir, "objective.mjs", include_str!("../hosts/objective.mjs"))?;
     put(dir, "usage-window.mjs", include_str!("../hosts/usage-window.mjs"))?;
     put(dir, "adaptive-collections.mjs", include_str!("../hosts/adaptive-collections.mjs"))?;
     put(dir, "adaptive-state.mjs", include_str!("../hosts/adaptive-state.mjs"))?;

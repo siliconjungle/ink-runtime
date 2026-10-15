@@ -1,6 +1,7 @@
 //! Opt-in synchronous host for already compiled state variants. Adapter code and
 //! deployment binding are trusted; no interpreter, proof search or trial calls.
 use ink_abi::adaptive::{self, Binding, Policy, Profile, Request, State, Window};
+use ink_abi::objective;
 use std::{
     collections::{BTreeMap, VecDeque},
     time::Instant,
@@ -22,6 +23,38 @@ pub struct WindowStats {
     pub sampled_calls: u64,
     pub sampled_ns: u128,
 }
+/// Already compiled ordinary goal code plus one immutable context revision.
+/// The adapter owns its context; publish changed model/goal state via retarget.
+/// Adapter code and empirical score predictions remain trusted, not proofs.
+pub struct Objective {
+    goal: objective::Goal,
+    direction: objective::Direction,
+    minimum_improvement: f64,
+    score: Box<
+        dyn Fn(&[objective::Candidate]) -> Result<BTreeMap<String, objective::Score>, String>
+            + Send
+            + Sync,
+    >,
+}
+impl Objective {
+    pub fn new(
+        goal: objective::Goal,
+        direction: objective::Direction,
+        minimum_improvement: f64,
+        score: impl Fn(&[objective::Candidate]) -> Result<BTreeMap<String, objective::Score>, String>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Result<Self, String> {
+        objective::validate_goal(&goal, minimum_improvement)?;
+        Ok(Self {
+            goal,
+            direction,
+            minimum_improvement,
+            score: Box::new(score),
+        })
+    }
+}
 /// Exclusive &mut access is the transaction boundary. The facade does not expose
 /// an instance reference, so callers cannot interleave an action with migration.
 pub struct Host<F: Factories> {
@@ -37,6 +70,8 @@ pub struct Host<F: Factories> {
     pub disabled: bool,
     recording: bool,
     pub last_diagnostic: String,
+    objective: Option<Objective>,
+    previous_goal: Option<objective::Goal>,
 }
 impl<F: Factories> Host<F> {
     pub fn new(
@@ -84,6 +119,8 @@ impl<F: Factories> Host<F> {
             disabled: false,
             recording: true,
             last_diagnostic: String::new(),
+            objective: None,
+            previous_goal: None,
         };
         host.request.window.counts.clear();
         host.request.window.calls = 0;
@@ -98,6 +135,29 @@ impl<F: Factories> Host<F> {
     }
     pub fn current(&self) -> &str {
         &self.request.current
+    }
+    pub fn objective(&self) -> Option<&objective::Goal> {
+        self.objective.as_ref().map(|o| &o.goal)
+    }
+    pub fn retarget(
+        &mut self,
+        next: Option<Objective>,
+        expected: Option<&objective::Goal>,
+    ) -> Result<(), String> {
+        if self.objective() != expected {
+            return Err("stale objective update".into());
+        }
+        self.objective = next;
+        self.previous_goal = None;
+        self.request.state.pending.clear();
+        self.request.state.confirmations = 0;
+        self.request.window.calls = 0;
+        self.request.window.counts.clear();
+        self.request.window.saturated = false;
+        self.sampled_calls = 0;
+        self.sampled_ns = 0;
+        self.recent.clear();
+        Ok(())
     }
     pub fn recent(&self) -> &VecDeque<WindowStats> {
         &self.recent
@@ -173,14 +233,34 @@ impl<F: Factories> Host<F> {
     }
     fn consider(&mut self) -> Result<(), String> {
         let started = Instant::now();
-        let decision = adaptive::decide(&self.request)?;
-        self.last_diagnostic = decision.reason;
-        self.request.state = decision.state;
-        if decision.selected == self.request.current {
+        let (selected, reason, state) = if let Some(goal) = &self.objective {
+            let request = objective::Request {
+                schema: 1,
+                adaptive: self.request.clone(),
+                goal: goal.goal.clone(),
+                direction: goal.direction,
+                minimum_improvement: goal.minimum_improvement,
+                previous_goal: self.previous_goal.clone(),
+            };
+            let prepared = objective::prepare(&request)?;
+            let assessment = objective::Assessment {
+                subject: prepared.subject,
+                scores: (goal.score)(&prepared.candidates)?,
+            };
+            let decision = objective::decide(&request, &assessment)?;
+            self.previous_goal = Some(decision.goal);
+            (decision.selected, decision.reason, decision.state)
+        } else {
+            let decision = adaptive::decide(&self.request)?;
+            (decision.selected, decision.reason, decision.state)
+        };
+        self.last_diagnostic = reason;
+        self.request.state = state;
+        if selected == self.request.current {
             return Ok(());
         }
         let bytes = self.checkpoint()?;
-        let candidate = self.factories.restore(&decision.selected, &bytes)?;
+        let candidate = self.factories.restore(&selected, &bytes)?;
         if candidate.checkpoint()? != bytes {
             return Err("adaptive restore changed snapshot".into());
         }
@@ -188,7 +268,7 @@ impl<F: Factories> Host<F> {
             return Err("adaptive observed pause budget".into());
         }
         self.live = candidate;
-        self.request.current = decision.selected;
+        self.request.current = selected;
         self.request.state = State {
             pending: String::new(),
             confirmations: 0,

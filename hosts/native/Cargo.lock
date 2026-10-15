@@ -326,7 +326,7 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-abi?rev=339d9566ee08bc9287445e36b05ec1988d435d56#339d9566ee08bc9287445e36b05ec1988d435d56"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=6356464654b39341d1e442d61c64be1e3a720489#6356464654b39341d1e442d61c64be1e3a720489"
 dependencies = [
  "num-bigint",
  "num-traits",

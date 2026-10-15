@@ -15,6 +15,7 @@ export async function createAdaptiveCollections(configs){
   checkpoint(id){return get(id).checkpoint();},
   restore(id,bytes){return get(id).restore(bytes);},
   acknowledge(id,commit,position){return get(id).acknowledge(commit,position);},
+  retarget(id,objective,expected=null){return get(id).retarget(objective,expected);},
   status(){return Object.fromEntries([...hosts].map(([id,h])=>[id,h.status()]));},
   async close(){await Promise.allSettled([...hosts.values()].map(h=>h.close()));}
  };

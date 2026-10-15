@@ -1,6 +1,7 @@
 import {selectionRequest} from './ink-selection.mjs';
 import {createAdaptiveRecorder} from './adaptive-profile.mjs';
 import {captureUsage,createUsageWindow} from './usage-window.mjs';
+import {captureObjective,objectiveIdentity,objectiveDecision} from './objective.mjs';
 const digest=async bytes=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const read=async url=>url.protocol==='file:'?new Uint8Array(await(await import('node:fs/promises')).readFile(url)):new Uint8Array(await(await fetch(url)).arrayBuffer());
 
@@ -27,8 +28,9 @@ export async function loadAdaptiveState(url,options={}){
  * Calls are captured synchronously and serialized; transitions never repeat a call.
  * No state references escape this facade. State callbacks must not call this facade.
  */
-export async function createAdaptiveState({binding,profile,variants,baseline,policy,recording={},usage=null,maxPending=64,maxSnapshotBytes=64*1024*1024,maxCaptureBytes=8*1024*1024,onDiagnostic=()=>{},clock=()=>performance.now(),enabled=true}){
+export async function createAdaptiveState({binding,profile,variants,baseline,policy,objective=null,recording={},usage=null,maxPending=64,maxSnapshotBytes=64*1024*1024,maxCaptureBytes=8*1024*1024,onDiagnostic=()=>{},clock=()=>performance.now(),enabled=true}){
  binding=structuredClone(binding);profile=structuredClone(profile);policy=structuredClone(policy);variants={...variants};
+ objective=captureObjective(objective);let previousGoal=null;
  if(Object.keys(variants).sort().join('\0')!==Object.keys(binding.variants).sort().join('\0')||!Object.hasOwn(variants,baseline))throw Error('adaptive factory binding');
  for(const n of [maxPending,maxSnapshotBytes,maxCaptureBytes])if(!Number.isSafeInteger(n)||n<1||n>Number.MAX_SAFE_INTEGER)throw Error('adaptive host limit');
  let current=baseline,state={pending:'',confirmations:0,last_switch_call:0,switches:0};
@@ -48,7 +50,8 @@ export async function createAdaptiveState({binding,profile,variants,baseline,pol
   if(window.saturated){state.pending='';state.confirmations=0;return;}
   const start=time();let next=null;
   try{
-   const decision=await selectionRequest(request(window));state=decision.state;emit({kind:'decision',...decision});
+   const decision=objective?await objectiveDecision(objective,request(window).request,previousGoal):await selectionRequest(request(window));
+   state=decision.state;if(objective)previousGoal=decision.goal;emit({kind:'decision',...decision});
    if(decision.selected===current)return;
    const checkpoint=await live.checkpoint();
    if(!(checkpoint instanceof Uint8Array)||checkpoint.byteLength>maxSnapshotBytes)throw Error('adaptive snapshot budget');
@@ -111,7 +114,19 @@ export async function createAdaptiveState({binding,profile,variants,baseline,pol
   },
   // Acknowledgement must be serialized with calls/migrations too.
   acknowledge(commit,position){return enqueue(()=>{const ack=live.acknowledge??live.acknowledgeThrough??live.acknowledge_through;if(!ack)throw Error('state acknowledgement unavailable');return ack.call(live,commit,position);});},
-  status(){return {current,disabled,pending,captured_bytes:capturedBytes,state:{...state},usage:recorder?.snapshot()??null,access:usageRecorder?.snapshot()??null};},
+  retarget(next,expected=null){
+   next=captureObjective(next);expected=structuredClone(expected);
+   return enqueue(()=>{
+    const active=objectiveIdentity(objective);
+    const same=active===null?expected===null:expected&&Object.keys(expected).sort().join(',')==='context,entry,revision,source'
+      &&['source','entry','revision','context'].every(k=>active[k]===expected[k]);
+    if(!same)throw Error('stale objective update');
+    objective=next;previousGoal=null;state.pending='';state.confirmations=0;
+    recorder?.resetWindow();
+    const goal=objectiveIdentity(objective);emit({kind:'objective-changed',goal});return goal;
+   });
+  },
+  status(){return {current,disabled,pending,captured_bytes:capturedBytes,state:{...state},goal:objectiveIdentity(objective),usage:recorder?.snapshot()??null,access:usageRecorder?.snapshot()??null};},
   async close(){if(closed)return tail;closed=true;await tail;await dispose(live);}
  };
 }

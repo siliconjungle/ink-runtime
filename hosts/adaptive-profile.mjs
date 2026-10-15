@@ -29,6 +29,7 @@ export function createAdaptiveRecorder({windowCalls=128,maxCells=64,historyWindo
    // An overflowing window has incomplete counts and cannot enter the decision engine.
    return window;
   },
+  resetWindow(){counts=Object.create(null);latency=Object.create(null);calls=0;saturated=false;history=[];},
   snapshot(){return {total_calls:total,partial_calls:calls,timing_enabled:timingEnabled,windows:structuredClone(history)};}
  };
 }
