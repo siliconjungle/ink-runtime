@@ -89,7 +89,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=56fd01e088b539dafc3a71142f942093906c60e1#56fd01e088b539dafc3a71142f942093906c60e1"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=8cef6e0d8f9553011c349f53559a2213c17533d2#8cef6e0d8f9553011c349f53559a2213c17533d2"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -102,7 +102,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=f44cf1d61bcf2eebb80651c9e895353980dca0ed#f44cf1d61bcf2eebb80651c9e895353980dca0ed"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=22ca38eda9d6f0de35e55fa6114efdce35c9f7a3#22ca38eda9d6f0de35e55fa6114efdce35c9f7a3"
 dependencies = [
  "ink-abi",
  "ink-core",
