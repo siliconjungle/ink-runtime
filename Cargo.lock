@@ -77,7 +77,7 @@ dependencies = [
 [[package]]
 name = "ink-core"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lang?rev=bb0af4ad5ad253a5961ca6e4f182d2c2e84cd3ea#bb0af4ad5ad253a5961ca6e4f182d2c2e84cd3ea"
+source = "git+https://github.com/siliconjungle/ink-lang?rev=902bd27f2f4aca062970e49a2304372607e74a80#902bd27f2f4aca062970e49a2304372607e74a80"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -89,7 +89,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=4e96dac400270358032028463eafad1b8a0ba43b#4e96dac400270358032028463eafad1b8a0ba43b"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=aa83bc0fb56308897c9374a3ac79753951ed4810#aa83bc0fb56308897c9374a3ac79753951ed4810"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -102,7 +102,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-js"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=ae78b7eb1d880355b0d4b31e24d6c2a5ca76739e#ae78b7eb1d880355b0d4b31e24d6c2a5ca76739e"
+source = "git+https://github.com/siliconjungle/ink-lowering-js?rev=62ea46f8f206190c1bd4687280e03cde105b558f#62ea46f8f206190c1bd4687280e03cde105b558f"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -113,7 +113,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-rust"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=90ea4e2f2b6a2d4055e4e61139f4d8ad5f9deaa5#90ea4e2f2b6a2d4055e4e61139f4d8ad5f9deaa5"
+source = "git+https://github.com/siliconjungle/ink-lowering-rust?rev=9321da4a2e47f1fd9c280795fb7d8826f8393203#9321da4a2e47f1fd9c280795fb7d8826f8393203"
 dependencies = [
  "ink-abi",
  "ink-core",
@@ -127,7 +127,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-wasm"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=8f9b01334f50f6abaff54098e061a8e2641301a6#8f9b01334f50f6abaff54098e061a8e2641301a6"
+source = "git+https://github.com/siliconjungle/ink-lowering-wasm?rev=7b1108f9dc162269dcb557d2dc46fdefc5da4a4c#7b1108f9dc162269dcb557d2dc46fdefc5da4a4c"
 dependencies = [
  "ink-abi",
  "ink-core",
