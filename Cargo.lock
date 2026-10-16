@@ -89,7 +89,7 @@ dependencies = [
 [[package]]
 name = "ink-lowering-gpu"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=b8ff6ad21384fd645ceafc647d7762300a5ef188#b8ff6ad21384fd645ceafc647d7762300a5ef188"
+source = "git+https://github.com/siliconjungle/ink-lowering-gpu?rev=526306d8ca113edf09fb42a7af21172e88f903d1#526306d8ca113edf09fb42a7af21172e88f903d1"
 dependencies = [
  "ink-abi",
  "ink-core",
