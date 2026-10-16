@@ -15,8 +15,12 @@ fn target_dir(project:&Path)->LangResult<(std::path::PathBuf,Option<std::fs::Fil
 }
 /// Compile a generated Rust CPU fallback project for a browser GPU bundle.
 pub fn gpu_cpu_wasm(project: &Path, output: &Path) -> LangResult<()> {
+    gpu_cpu_wasm_with_cargo(project, output, &std::env::var("INK_CARGO").unwrap_or_else(|_| "cargo".into()))
+}
+/// Use the same explicitly requested toolchain for every nested CPU fallback.
+pub fn gpu_cpu_wasm_with_cargo(project: &Path, output: &Path, cargo: &str) -> LangResult<()> {
     let (target,_cache_guard)=target_dir(project)?;
-    let result = Command::new(std::env::var("INK_CARGO").unwrap_or_else(|_| "cargo".into()))
+    let result = Command::new(cargo)
         .args([
             "build",
             "--release",
