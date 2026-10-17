@@ -2,100 +2,14 @@
 //! packed GPU adapter; values and effects outside that ABI use complete hosts.
 use ink_core::{core::CheckedModule, syntax::*, LangResult};
 use serde_json::json;
-use std::{collections::BTreeSet, fs, path::Path};
-fn expr(e: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet<String>) {
-    match e {
-        Expr::Call(n, a) => {
-            calls.insert(n.clone());
-            for e in a {
-                expr(e, calls, types)
-            }
-        }
-        Expr::Var(n) => {
-            if let Some((owner, _)) = n.rsplit_once('.') {
-                types.insert(owner.to_owned());
-            }
-        }
-        Expr::Record(n, fs) => {
-            types.insert(n.clone());
-            for (_, e) in fs {
-                expr(e, calls, types)
-            }
-        }
-        Expr::Let(_, t, a, b) => {
-            if let Some(t) = t {
-                ty(t, types)
-            }
-            expr(a, calls, types);
-            expr(b, calls, types)
-        }
-        Expr::Binary(_, a, b) => {
-            expr(a, calls, types);
-            expr(b, calls, types)
-        }
-        Expr::Field(a, _) => {
-            if let Expr::Var(owner) = a.as_ref() { types.insert(owner.clone()); }
-            expr(a, calls, types)
-        }
-        Expr::Neg(a) | Expr::Lambda(_, a) | Expr::Try(a) => {
-            expr(a, calls, types)
-        }
-        Expr::Method(a, _, xs) => {
-            expr(a, calls, types);
-            for e in xs {
-                expr(e, calls, types)
-            }
-        }
-        _ => (),
-    }
-}
-fn ty(t: &Type, names: &mut BTreeSet<String>) {
-    match t {
-        Type::Named(n) => {
-            names.insert(n.clone());
-        }
-        Type::List(t) | Type::Buffer(t) | Type::Option(t) | Type::Vector(t, _) => ty(t, names),
-        Type::Result(a, b) | Type::Map(a, b) | Type::Table(a, b) => {
-            ty(a, names);
-            ty(b, names)
-        }
-        _ => (),
-    }
-}
+use std::{fs, path::Path};
 fn closure(p: &Program, name: &str) -> LangResult<CheckedModule> {
     if p.contracts.precondition_checks.contains_key(name) {
         return Err("contract precondition ingress uses the complete host".into());
     }
-    let mut names = BTreeSet::from([name.to_owned()]);
-    let mut types = BTreeSet::new();
-    loop {
-        let before = names.len();
-        for f in &p.functions {
-            if names.contains(&f.name) {
-                for (_, t) in &f.params {
-                    ty(t, &mut types)
-                }
-                ty(&f.result, &mut types);
-                expr(&f.body, &mut names, &mut types)
-            }
-        }
-        if before == names.len() {
-            break;
-        }
-    }
-    loop {
-        let before = types.len();
-        for (n, fs) in &p.records {
-            if types.contains(n) {
-                for (_, t) in fs {
-                    ty(t, &mut types)
-                }
-            }
-        }
-        if before == types.len() {
-            break;
-        }
-    }
+    let dependencies = ink_core::analysis::function_dependencies(p, name, 100000)?;
+    let names = dependencies.functions;
+    let types = dependencies.named_types;
     let mut sub = p.clone();
     sub.functions.retain(|f| names.contains(&f.name));
     sub.records.retain(|n, _| types.contains(n));
@@ -231,6 +145,15 @@ mod tests {
         let checked=super::closure(&p,"f").unwrap();
         assert!(checked.program().records.contains_key("Item"));
         assert!(checked.program().enums.contains_key("E"));
+    }
+    #[test]
+    fn lexical_record_receivers_do_not_retain_unrelated_global_types() {
+        let p=ink_core::syntax::parse("module shadows;record Alias{items:List<f64>,}record Point{x:f32,}fn f(Alias:Point)->f32{return Alias.x;}").unwrap();
+        let checked=super::closure(&p,"f").unwrap();
+        assert!(checked.program().records.contains_key("Point"));
+        assert!(!checked.program().records.contains_key("Alias"));
+        let emission=ink_lowering_gpu::compute::lower(&checked).unwrap();
+        assert!(emission.manifest["functions"][0]["fallback_reason"].is_null());
     }
     #[test]
     fn graph_only_gpu_entries_are_eligible_in_mixed_modules() {
