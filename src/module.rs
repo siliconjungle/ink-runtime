@@ -82,7 +82,7 @@ fn emit_checked(
     for (i, f) in p.functions.iter().enumerate() {
         let folder = format!("gpu/f{i}");
         let result = closure(p,&f.name).and_then(|sub|{
-            super::assemble(&sub,&dir.join(&folder),None,None)?;
+            super::assemble_entry(&sub,&dir.join(&folder),None,None,Some(&f.name))?;
             super::put(&dir.join(&folder),"core.json",sub.bytes()?)
         });
         let capability = match result {

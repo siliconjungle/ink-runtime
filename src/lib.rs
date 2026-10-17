@@ -73,12 +73,32 @@ fn assemble(
     route: Option<&ink_core::source_routing::CheckedRouting>,
     resources: Option<&ink_core::resources::CheckedResources>,
 ) -> LangResult<()> {
+    assemble_entry(checked, dir, route, resources, None)
+}
+// Mixed modules retain the complete host interface. Their individual device
+// parts expose only the selected entry; helper-only types need no packed ABI.
+fn assemble_entry(
+    checked: &core::CheckedModule, dir: &Path,
+    route: Option<&ink_core::source_routing::CheckedRouting>,
+    resources: Option<&ink_core::resources::CheckedResources>,
+    entry: Option<&str>,
+) -> LangResult<()> {
     remove_c_artifacts(dir)?;
     let p = checked.pure_program()?;
-    let compute = uses_packed_compute(p);
-    let cpu = ink_lowering_rust::packed::lower(checked, compute)?;
+    let compute = entry.is_some() || uses_packed_compute(p);
+    let mut emitted = if let Some(entry)=entry {
+        let emission=ink_lowering_gpu::compute::lower_entry(checked, entry)?;
+        let function=emission.manifest["functions"].as_array().and_then(|fs|fs.first())
+            .ok_or("missing selected device entry")?;
+        if !function["shader"].is_string() && !function["graph"].is_object() {
+            return Err(function["fallback_reason"].as_str().unwrap_or("CPU-only function").to_owned());
+        }
+        emission
+    } else { ink_lowering_gpu::gpu::lower(checked)? };
+    let cpu = if let Some(entry)=entry {
+        ink_lowering_rust::packed::lower_entry(checked, true, entry)?
+    } else { ink_lowering_rust::packed::lower(checked, compute)? };
     let javascript = ink_lowering_js::lower(checked)?;
-    let mut emitted = ink_lowering_gpu::gpu::lower(checked)?;
     emitted.manifest["javascript"] = javascript.manifest.clone();
     emitted.manifest["javascript_sha256"] = json!(format!(
         "{:x}",
