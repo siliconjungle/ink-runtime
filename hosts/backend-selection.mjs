@@ -2,7 +2,7 @@
 import {selectionRequest} from './ink-selection.mjs';
 import {pipelineScope} from './pipeline-contract.mjs';
 export async function workloadFeatures(workload){return selectionRequest({operation:'features',workload});}
-export function profileScope(manifest,entry){return JSON.stringify([manifest.core_sha256,manifest.cpu_rust_sha256,manifest.javascript_sha256,entry]);}
+export function profileScope(manifest,entry){return JSON.stringify(['ink-complete-call-v2',manifest.core_sha256,manifest.cpu_rust_sha256,manifest.javascript_sha256,manifest.runtime_host_sha256,entry]);}
 export async function validateCostProfile(profile,targetKey){await selectionRequest({operation:'validate',profile,target_key:targetKey});return profile==null?null:structuredClone(profile);}
 // An explicit preparation owns one private snapshot and encoding. Opaque tokens
 // hold no device or execution state and cannot be forged by shape or name.

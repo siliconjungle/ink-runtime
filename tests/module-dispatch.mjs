@@ -7,8 +7,8 @@ import {pathToFileURL,fileURLToPath} from 'node:url';
 test('mixed module dispatches current graph and scalar aggregate host APIs',async()=>{
  const root=mkdtempSync(join(tmpdir(),'ink-module-dispatch-')),url=pathToFileURL(root+'/'),originalFetch=globalThis.fetch;
  try{
-  writeFileSync(join(root,'ink-module.mjs'),readFileSync(new URL('../hosts/ink-module.mjs',import.meta.url)));
-  writeFileSync(join(root,'state-wasm.mjs'),'export class StatefulModule{static async instantiate(){return{create(){return{pure(){return 17},dispose(){}}}}}}');
+  for(const name of ['ink-module.mjs','initial-state.mjs'])writeFileSync(join(root,name),readFileSync(new URL('../hosts/'+name,import.meta.url)));
+  writeFileSync(join(root,'state-wasm.mjs'),'export class StatefulModule{static async instantiate(){return{createSourceState(){return{pure(){return 17},dispose(){}}}}}}');
   writeFileSync(join(root,'program.mjs'),'export function call(){return 19}');
   writeFileSync(join(root,'cpu.wasm'),'stub');
   globalThis.__moduleDispatchClosed=[];

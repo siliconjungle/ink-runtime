@@ -58,14 +58,33 @@ native values between stages rather than packing, unpacking and recapturing each
 intermediate result. They remain serialized, so callers must keep borrowed
 JavaScript inputs stable until the returned promise settles. Wasm/GPU calls still
 snapshot inputs for transport; flat U32 typed arrays use one bulk clone. CPU
-fallback loads lazily when needed. Captured adaptive automatic U32 JavaScript calls reuse
-the private typed transport snapshot as a native list; they do not unpack a
-second input array. Packed-host identity results still become fresh public
+fallback loads lazily when needed. Profiled automatic calls capture native
+values before yielding, derive workload descriptors without packing, and let
+the shared selector choose before materializing Wasm/GPU transport. Finite F32
+inputs round once into native numbers; nonfinite tags retain exact bits. U32
+captures also supply their transport words. Packed-host identity results become fresh public
 Arrays, and explicit JavaScript identity calls retain their borrowed-input
 contract. Typed logical lengths, shared inputs and caller mutation after
 submission retain the same captured semantics. Graph configuration, device limits and result
 layout invariants remain host responsibilities. The packed host retains its
 JSON-compatible U64 output convention (safe Number, otherwise decimal string).
+
+When the shared selector establishes a profile-free or static CPU choice at
+engine load, ordinary automatic calls use the direct captured CPU path. They
+do not rebuild profiling keys or run workload-feature encoding on every call.
+Whole-call profiles use `ink-complete-call-v2` scopes, including the runtime host
+identity; earlier transport prices cannot select the changed host implicitly.
+
+Packed compute engines also expose `const call = engine.prepareCall(name,args)`.
+Preparation synchronously owns one immutable typed snapshot and checked call
+topology. `await call.run(options)` evaluates fresh primals, selects normally,
+and returns detached complete results. Selected CPU/GPU transport and workload
+descriptors can be retained across runs. `await call.close()` stops new runs,
+drains accepted work, and releases captures. Changing model inputs require new
+preparation. Prepared calls have their own `ink-prepared-call-v1` profile scope
+around the ordinary scope; setup must be measured separately and ordinary-call
+profiles cannot price this lifetime. This API is distinct from borrowed-output
+`prepareCpuCall` and resident `prepareGpuPipeline`.
 
 Run host checks with `node --test tests/*.mjs`. The distribution browser harness exercises emitted code, real WebGPU and real workers.
 

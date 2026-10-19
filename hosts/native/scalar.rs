@@ -238,7 +238,7 @@ impl Engine {
                 None,
             ));
         }
-        let scope=json!([self.manifest["core_sha256"],self.manifest["cpu_rust_sha256"],self.manifest["javascript_sha256"],f["name"]]).to_string();
+        let scope=json!(["ink-complete-call-v2",self.manifest["core_sha256"],self.manifest["cpu_rust_sha256"],self.manifest["javascript_sha256"],self.manifest["runtime_host_sha256"],f["name"]]).to_string();
         let inputs=args.iter().enumerate().map(|(i,a)|match a{Arg::Scalar(_)=>json!({"list":false,"count":1,"bytes":if f["params"][i]["type"]=="u64"{8}else{4}}),Arg::U32List(xs)=>json!({"list":true,"count":xs.len(),"bytes":xs.len()*4}),Arg::U64List(xs)=>json!({"list":true,"count":xs.len(),"bytes":xs.len()*8})}).collect::<Vec<_>>();
         let features=ink_abi::selection::features(&json!({"inputs":inputs,"outputs":[1],"stages":[{"dispatches":1}],"iterations":1}))?;
         let decision=ink_abi::selection::decide(&self.selection_options,&json!({"scope":scope,"boundary":"captured-owned","features":features}),&["cpu".into(),"gpu".into()])?;

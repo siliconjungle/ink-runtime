@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './shared-host-assets.mjs';
-const {createSelector}=await import('../hosts/backend-selection.mjs');
+const {createSelector,profileScope}=await import('../hosts/backend-selection.mjs');
 const {prepareCostProfile,captureCostProfile}=await import('../hosts/backend-selection.mjs');
 const costProfile={schema:1,target_key:'test-device',models:{kernel:{boundary:'captured-owned',domains:{input_elements:[0,65536],input_bytes:[0,262144]},backends:{cpu:{intercept_ns:100,terms:{input_elements:10}},javascript:{intercept_ns:20,terms:{input_elements:20}},gpu:{intercept_ns:1000,terms:{input_elements:1}}}}}};
+test('whole-call prices bind changed runtime transport and the scope version',()=>{
+ const manifest={core_sha256:'core',cpu_rust_sha256:'cpu',javascript_sha256:'js',runtime_host_sha256:'host'};
+ assert.deepEqual(JSON.parse(profileScope(manifest,'entry')),['ink-complete-call-v2','core','cpu','js','host','entry']);
+ assert.notEqual(profileScope(manifest,'entry'),profileScope({...manifest,runtime_host_sha256:'changed'},'entry'));
+});
 test('prepared profiles capture before yielding and preserve shared decisions and target rejection',async()=>{
  const input=structuredClone(costProfile),pending=prepareCostProfile(input,'test-device');
  input.models.kernel.backends.gpu.intercept_ns=1e12;

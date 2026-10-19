@@ -757,7 +757,7 @@ impl Engine {
             });
             return Ok(r);
         }
-        let scope=json!([self.manifest["core_sha256"],self.manifest["cpu_rust_sha256"],self.manifest["javascript_sha256"],p.steps.iter().map(|s|s.f["name"].as_str().unwrap()).collect::<Vec<_>>().join("|")]).to_string();
+        let scope=json!(["ink-complete-call-v2",self.manifest["core_sha256"],self.manifest["cpu_rust_sha256"],self.manifest["javascript_sha256"],self.manifest["runtime_host_sha256"],p.steps.iter().map(|s|s.f["name"].as_str().unwrap()).collect::<Vec<_>>().join("|")]).to_string();
         let graph_mode=p.steps.iter().any(|s|s.f["graph_required"].as_bool()==Some(true));
         let list_constants=p.inputs.values().chain(p.steps.iter().flat_map(|s|s.args.iter())).filter(|r|!r.step&&r.ty["kind"]=="list").map(|r|r.index).collect::<std::collections::BTreeSet<_>>();
         let inputs=p.constants.iter().enumerate().map(|(i,c)|json!({"list":list_constants.contains(&i),"count":c.count,"bytes":c.words.len()*4})).collect::<Vec<_>>();

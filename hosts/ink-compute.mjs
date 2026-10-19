@@ -1,4 +1,4 @@
-import {width,pack,unpack} from "./ink-abi.mjs";
+import {width,pack,unpack,capture} from "./ink-abi.mjs";
 import * as deviceLowering from "./ink-device.mjs";
 const {createDevice,dispatchCount,fieldPath,reducible,decodeComponents,combineWords,lanes} = deviceLowering;
 import {createSelector,profileScope,workloadFeatures,sessionWorkload,sessionContext} from "./backend-selection.mjs";
@@ -22,7 +22,7 @@ const fail = (s) => {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 
-function compilePlan(plan, functions, native = false) {
+function compilePlan(plan, functions, native = false, literal = false) {
   if (
     !plan ||
     !Array.isArray(plan.steps) ||
@@ -44,7 +44,7 @@ function compilePlan(plan, functions, native = false) {
     ids = new Map();
   let reason = null;
   const constant = (v, t) => {
-    const a = native ? {javascript: v, type: t, count: t.kind === "list" ? v.length : 1, finite: true} : pack(v, t);
+    const a = native === "capture" ? capture(v,t) : native ? {javascript: v, type: t, count: t.kind === "list" ? v.length : 1, finite: true} : pack(v, t);
     constants.push(a);
     return {
       kind: "constant",
@@ -63,7 +63,7 @@ function compilePlan(plan, functions, native = false) {
     const args = step.args.map((v, i) => {
       const t = f.params[i].type;
       if (
-        v &&
+        !literal && v &&
         typeof v === "object" &&
         !Array.isArray(v) &&
         Object.hasOwn(v, "step") &&
@@ -77,7 +77,7 @@ function compilePlan(plan, functions, native = false) {
         return { kind: "step", index: previous, type: t, count: s.count };
       }
       if (
-        v &&
+        !literal && v &&
         typeof v === "object" &&
         !Array.isArray(v) &&
         Object.hasOwn(v, "input") &&
@@ -133,8 +133,8 @@ function compilePlan(plan, functions, native = false) {
     feedback.set(input, ids.get(id));
   }
 
-  let bytes = native ? 0 : constants.reduce(
-    (n, c) => n + Math.max(4, c.words.byteLength+(c.type.kind==="list"?4:0)),
+  let bytes = native === true ? 0 : constants.reduce(
+    (n, c) => n + Math.max(4, (c.byteLength??c.words.byteLength)+(c.type.kind==="list"?4:0)),
     0,
   );
   bytes += steps.reduce(
@@ -163,7 +163,7 @@ function compilePlan(plan, functions, native = false) {
   }
   if (bytes > MAX_BYTES) reason ??= "GPU live-buffer budget exceeds 256 MiB";
   return {
-    native,
+    native: native === true,
     constants,
     inputs,
     steps,
@@ -202,9 +202,10 @@ export async function loadInk(
   }
   let tail=Promise.resolve(), closed=false;
   const selector=createSelector({policy,staticBackend,costProfile,targetKey});
-  const staticChoice=policy==='static' ? (await selector.choose(['cpu','javascript',...(gpu?['gpu']:[])])).backend : null;
-  // Resolve only the native JS transport boundary early. Other static choices
-  // stay automatic until the shared contract sees actual device eligibility.
+  const earlyDecision=policy==='static'||defaultBackend==='auto'&&costProfile===null ? await selector.choose(['cpu','javascript',...(gpu?['gpu']:[])]) : null;
+  const staticChoice=policy==='static'?earlyDecision?.backend:null;
+  // Static JS keeps its trusted borrowed boundary. A profile-free CPU choice
+  // is also known before capture, through the same authoritative ABI decision.
   const resolveBackend=requested=>requested==='auto' && staticChoice==='javascript' ? 'javascript' : requested;
   const jsStart=performance.now();
   const javascript=await import(new URL("program.mjs",root));
@@ -228,6 +229,10 @@ export async function loadInk(
     return workers;
   }
   const adapter=createDevice({root, enabled:gpu, device, onLost:()=>{if(closed)return;gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,MAX_BYTES});
+  function ensurePacked(p) {
+    for(const c of p.constants)if(!c.words)c.words=pack(c.javascript,c.type).words;
+    return p;
+  }
   function cpuCall(f, args, consume) {
     if(f.precondition && !cpuCall(f.precondition,args,data=>data.words[0]===1))fail('contract precondition failed');
     cpu.ink_compute_reset();
@@ -277,6 +282,7 @@ export async function loadInk(
     }
   }
   function runCpu(p) {
+    ensurePacked(p);
     const inputs = new Map(p.inputs),
       values = [], outputs = new Map();
     const used = new Set(p.steps.flatMap(s=>s.args.filter(a=>a.kind==='step').map(a=>a.index)));
@@ -344,7 +350,7 @@ export async function loadInk(
       for(const [input,stage] of p.feedback)inputs.set(input,{kind:'value',value:values[stage]});
     }
     return {values:Object.fromEntries(p.outputs.map(id=>{
-      const i=p.ids.get(id),f=p.steps[i].f,value=f.output(values[i]);
+      const i=p.ids.get(id),f=p.steps[i].f,value=f.output(p.reusable?capture(values[i],f.result).javascript:values[i]);
       // Packed requests retain their owned Array output convention even when
       // an identity returns the private captured U32 transport directly.
       return [id,!p.native && f.result.kind==='list' && f.result.element.kind==='u32' && value instanceof Uint32Array ? Array.from(value) : value];
@@ -381,7 +387,7 @@ export async function loadInk(
       // Preserve the device adapter's complete resident feedback/batch path.
       // Splitting a whole-GPU choice into host passes would reupload state.
       try {
-        await adapter.prepare(p);gpuWarm=true;const result=await adapter.run(p);
+        await adapter.prepare(ensurePacked(p));gpuWarm=true;const result=await adapter.run(p);
         return {...result,backend:'gpu',reason:selected.reason,placement:selected,stages:[{iteration:0,iterations:p.iterations,start:0,end:p.steps.length,requested:'gpu',backend:'gpu',outputs:p.outputs,reason:selected.reason,counters:result.counters}]};
       }catch(error) {
         if(!/limit|budget|shape|non-finite/i.test(String(error)))gpuFailed=true;
@@ -456,7 +462,7 @@ export async function loadInk(
     }
     const actual=new Set(receipts.map(r=>r.backend));
     return {values:Object.fromEntries(p.outputs.map(id=>{
-      const i=p.ids.get(id),f=p.steps[i].f,value=f.output(values[i]);
+      const i=p.ids.get(id),f=p.steps[i].f,value=f.output(p.reusable?capture(values[i],f.result).javascript:values[i]);
       return [id,f.result.kind==='list'&&f.result.element.kind==='u32'&&value instanceof Uint32Array?Array.from(value):value];
     })),backend:actual.size===1?[...actual][0]:'mixed',reason:selected.reason,placement:selected,stages:receipts.sort((a,b)=>a.iteration-b.iteration||a.start-b.start),counters};
   }
@@ -479,14 +485,20 @@ export async function loadInk(
     if(backend === 'gpu-required' && p.reason)fail(p.reason);
     if(backend === 'cpu'){await ensureCpu();return {...runCpu(p),backend,reason:'explicit backend selection'};}
     if(backend === 'gpu' && p.reason){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:p.reason};}
-    const scope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
-    const graphMode=p.steps.some(s=>s.f.graph_required);
-    const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:dispatchCount({steps:[{...s,f:{...s.f,graph_required:graphMode}}]})})),iterations:p.iterations});
-    const key=scope;
+    if(backend==='auto'&&earlyDecision?.backend==='cpu'){await ensureCpu();return {...runCpu(p),backend:'cpu',reason:earlyDecision.reason,profile:structuredClone(earlyDecision)};}
+    let context=p.selectionContext;
+    if(!context) {
+      const ordinaryScope=profileScope(manifest,p.steps.map(s=>s.f.name).join('|'));
+      const scope=p.reusable?JSON.stringify(['ink-prepared-call-v1',ordinaryScope]):ordinaryScope;
+      const graphMode=p.steps.some(s=>s.f.graph_required);
+      const features=await workloadFeatures({inputs:p.constants.map(c=>({list:c.type.kind==='list',count:c.count,bytes:c.byteLength??c.words.byteLength})),outputs:p.outputs.map(id=>p.steps[p.ids.get(id)].count??0),stages:p.steps.map(s=>({dispatches:dispatchCount({steps:[{...s,f:{...s.f,graph_required:graphMode}}]})})),iterations:p.iterations});
+      context={scope,boundary:'captured-owned',features};
+      if(p.reusable)p.selectionContext=context;
+    }
 
-    const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:ensureCpu,run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
-    if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:async()=>{await adapter.prepare(p);gpuWarm=true;},run:()=>adapter.run(p)});
-    const outcome=await selector.run(key,candidates,backend,{scope,boundary:'captured-owned',features});
+    const candidates=[{name:'cpu',startupMs:cpuStartup,prepare:async()=>{ensurePacked(p);await ensureCpu();},run:()=>runCpu(p)},{name:'javascript',async:true,startupMs:jsStartup,run:()=>runJavascript(p)}];
+    if(!p.reason && gpu) candidates.push({name:'gpu',async:true,prepare:async()=>{await adapter.prepare(ensurePacked(p));gpuWarm=true;},run:()=>adapter.run(p)});
+    const outcome=await selector.run(context.scope,candidates,backend,context);
     return {...outcome.result,backend:outcome.backend,reason:outcome.reason,profile:outcome.profile};
   }
   function serial(fn) {
@@ -494,12 +506,13 @@ export async function loadInk(
     tail = task.catch(() => {});
     return task;
   }
-  function submit(plan, options) {
+  function submit(plan, options, literal = false) {
     let prepared;
     try {
       if(closed) fail('Ink runtime is closed');
       if(options)options={...options,placements:Array.isArray(options.placements)?options.placements.map(s=>({...s})):options.placements};
-      prepared = compilePlan(plan, functions, resolveBackend(options?.backend ?? defaultBackend) === 'javascript');
+      const backend=resolveBackend(options?.backend??defaultBackend);
+      prepared = compilePlan(plan,functions,backend==='javascript'?true:backend==='auto'&&(!earlyDecision||earlyDecision.backend!=='cpu'||options?.placements||placementProfile)?'capture':false,literal);
     } catch (e) {
       return Promise.reject(e);
     }
@@ -591,7 +604,7 @@ export async function loadInk(
       if(choice==='cpu'||p.reason)reason=reason??(choice==='cpu'?'explicit CPU selection':p.reason);
       else if(!gpu||gpuFailed){if(backend==='gpu-required')fail('GPU unavailable');reason='GPU unavailable';}
       else try {
-        await adapter.prepare(p);gpuWarm=true;
+        await adapter.prepare(ensurePacked(p));gpuWarm=true;
         state={gpu:await adapter.open(p)};reason=reason??'explicit resident GPU session';
       } catch(error) {
         if(backend==='gpu-required')throw error;
@@ -685,6 +698,23 @@ export async function loadInk(
       const instance=await instantiateCpu();
       return createPackedCall(instance,f.index,packed,capacityWords);
     },
+    // Own one immutable argument snapshot. Every run evaluates fresh primals
+    // and returns detached complete results; this is not a borrowed output ABI.
+    prepareCall: (name,args) => {
+      if(closed)fail('Ink runtime is closed');
+      let prepared=compilePlan({steps:[{id:'result',call:name,args}],outputs:['result']},functions,'capture',true);
+      prepared.reusable=true;
+      let stopped=false;
+      return Object.freeze({
+        run: options=>{
+          if(stopped||closed)return Promise.reject(Error('Ink prepared call is closed'));
+          const p=prepared;
+          const captured=options?{...options,placements:Array.isArray(options.placements)?options.placements.map(s=>({...s})):options.placements}:undefined;
+          return serial(()=>execute(p,captured)).then(r=>({...r,value:r.values.result}));
+        },
+        close: ()=>{stopped=true;return serial(()=>{prepared=null;});},
+      });
+    },
     prepareGpuPipeline: plan => {
       let prepared;
       try {if(closed)fail('Ink runtime is closed');prepared=compilePlan(plan,functions,false);if(!gpu)fail('GPU disabled by host option');if(prepared.reason)fail(prepared.reason);}
@@ -701,23 +731,24 @@ export async function loadInk(
     gpuDevice: () => adapter.handle(),
     call: (name, args, options) => {
       const backend=resolveBackend(options?.backend ?? defaultBackend);
-      if(backend === 'cpu') {
+      if(backend === 'cpu'||backend==='auto'&&earlyDecision?.backend==='cpu'&&!options?.placements&&(!options?.placement||['whole','adaptive'].includes(options.placement))&&!(placementProfile&&options?.placement!=='whole')) {
         const f=functions.get(name);
         if(!f) return Promise.reject(Error(`unknown function ${name}`));
         let packed;
         try {
           if(closed) fail('Ink runtime is closed');
+          if(!Array.isArray(args)||args.length!==f.params.length)fail('argument count mismatch');
           packed=f.params.map((p,i)=>pack(args[i],p.type));
         } catch(error) { return Promise.reject(error); }
         return serial(async()=>{
           if(closed) fail('Ink runtime is closed');
           await ensureCpu();
           const value=cpuCall(f,packed,data=>unpack(data.words,f.result));
-          return {value,values:{result:value},backend,reason:'explicit backend selection',counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
+          return {value,values:{result:value},backend:'cpu',reason:backend==='auto'?earlyDecision.reason:'explicit backend selection',...(backend==='auto'?{profile:structuredClone(earlyDecision)}:{}),counters:{upload_bytes:0,readback_bytes:0,dispatches:0}};
         });
       }
       if(backend !== 'javascript') return submit(
-        {steps:[{id:'result',call:name,args}],outputs:['result']}, options,
+        {steps:[{id:'result',call:name,args}],outputs:['result']}, options, true,
       ).then(r=>({...r,value:r.values.result}));
       const f=functions.get(name);
       if(!f) return Promise.reject(Error(`unknown function ${name}`));
