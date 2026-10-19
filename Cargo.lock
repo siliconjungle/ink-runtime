@@ -65,7 +65,7 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-abi?rev=49144825478a03932220dfaa0abd862a7f442dca#49144825478a03932220dfaa0abd862a7f442dca"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=6356464654b39341d1e442d61c64be1e3a720489#6356464654b39341d1e442d61c64be1e3a720489"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -77,7 +77,7 @@ dependencies = [
 [[package]]
 name = "ink-abi"
 version = "0.1.0"
-source = "git+https://github.com/siliconjungle/ink-abi?rev=6356464654b39341d1e442d61c64be1e3a720489#6356464654b39341d1e442d61c64be1e3a720489"
+source = "git+https://github.com/siliconjungle/ink-abi?rev=8f9de93cf30bf658195bb94ad7ebba9e37bf1c05#8f9de93cf30bf658195bb94ad7ebba9e37bf1c05"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -155,7 +155,7 @@ source = "git+https://github.com/siliconjungle/ink-native-support?rev=8a87387f94
 name = "ink-runtime"
 version = "0.1.0"
 dependencies = [
- "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=49144825478a03932220dfaa0abd862a7f442dca)",
+ "ink-abi 0.1.0 (git+https://github.com/siliconjungle/ink-abi?rev=8f9de93cf30bf658195bb94ad7ebba9e37bf1c05)",
  "ink-core",
  "ink-lowering-gpu",
  "ink-lowering-js",
