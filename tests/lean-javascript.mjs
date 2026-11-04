@@ -194,6 +194,30 @@ test('GPU failure packs from the owned capture and CPU fallback runs once',async
  assert.deepEqual(result.value,[0,4]);assert.equal(cpuCalls(),1);assert.equal(wasmLoads(),1);assert.equal(packCalls(),0,'owned U32 capture doubles as CPU transport');
 },{backend:'auto',gpu:true,targetKey:'test',costProfile:savedProfile('increment','gpu')}));
 
+test('finite typed prepared inputs retain exact words across JS/CPU and fresh validation',async()=>fixture(async(runtime,cpuCalls,wasmLoads,packCalls)=>{
+ const values=new Float32Array(128);values.set([1/3,-0,Math.fround(1e-40)]);const expected=Array.from(values);
+ const prepared=runtime.prepareCall('floatIdentity',[values]);values.fill(99);
+ assert.equal(packCalls(),0);
+ const a=(await prepared.run({backend:'javascript'})).value;assert(Array.isArray(a));assert.deepEqual(a,expected);a.fill(9);
+ const b=(await prepared.run({backend:'cpu'})).value;assert.deepEqual(b,expected);b.fill(8);
+ assert.deepEqual((await prepared.run({backend:'javascript'})).value,expected);
+ assert.equal(packCalls(),0,'validated typed capture already owns CPU/GPU transport');
+ assert.equal(cpuCalls(),1);assert.equal(wasmLoads(),1);
+ values[0]=Infinity;
+ assert.throws(()=>runtime.prepareCall('floatIdentity',[values]),/f32 input overflow/);
+ await assert.rejects(runtime.call('floatIdentity',[values],{backend:'cpu'}),/f32 input overflow/);
+ assert.deepEqual((await prepared.run({backend:'cpu'})).value,expected);
+ await prepared.close();
+},{backend:'auto'}));
+
+test('known JavaScript preparation retains native capture until a CPU override',async()=>fixture(async(runtime,cpuCalls,wasmLoads,packCalls)=>{
+ const input=new Float32Array(128);input.set([1/3,-0]);const expected=Array.from(input);
+ const prepared=runtime.prepareCall('floatIdentity',[input]);input.fill(9);
+ assert.deepEqual((await prepared.run()).value,expected);assert.equal(packCalls(),0);
+ assert.deepEqual((await prepared.run({backend:'cpu'})).value,expected);assert.equal(packCalls(),1);
+ assert.deepEqual((await prepared.run()).value,expected);assert.equal(cpuCalls(),1);await prepared.close();
+},{backend:'javascript'}));
+
 test('ordinary prices cannot select the different prepared-call lifetime',async()=>fixture(async runtime=>{
  assert.equal((await runtime.call('floatIdentity',[[1/3]])).backend,'javascript');
  const prepared=runtime.prepareCall('floatIdentity',[[1/3]]);

@@ -86,6 +86,13 @@ around the ordinary scope; setup must be measured separately and ordinary-call
 profiles cannot price this lifetime. This API is distinct from borrowed-output
 `prepareCpuCall` and resident `prepareGpuPipeline`.
 
+Preparation for a known CPU/GPU consumer prefers packed transport for eligible
+large Float32Array inputs. The shared ABI validates an owned finite snapshot and
+can lazily materialize its ordinary JavaScript Array if a run overrides the
+backend. JavaScript and unknown-consumer preparations retain native capture.
+Fresh inputs still require fresh validation; no caller buffer or result becomes
+shared. This changes setup representation, not backend selection or arithmetic.
+
 Run host checks with `node --test tests/*.mjs`. The distribution browser harness exercises emitted code, real WebGPU and real workers.
 
 Explicit packed CPU calls bind the function directly and marshal its arguments

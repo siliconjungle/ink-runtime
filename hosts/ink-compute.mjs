@@ -1,4 +1,4 @@
-import {width,pack,unpack,capture,numericDestination} from "./ink-abi.mjs";
+import {width,pack,unpack,capture,captureTransport,numericDestination} from "./ink-abi.mjs";
 import * as deviceLowering from "./ink-device.mjs";
 const {createDevice,dispatchCount,fieldPath,reducible,decodeComponents,combineWords,lanes} = deviceLowering;
 import {createSelector,profileScope,workloadFeatures,sessionWorkload,sessionContext} from "./backend-selection.mjs";
@@ -44,7 +44,9 @@ function compilePlan(plan, functions, native = false, literal = false) {
     ids = new Map();
   let reason = null;
   const constant = (v, t) => {
-    const a = native === "capture" ? capture(v,t) : native ? {javascript: v, type: t, count: t.kind === "list" ? v.length : 1, finite: true} : pack(v, t);
+    const a = native === "capture" ? capture(v,t) : native === "capture-transport" ?
+      (ArrayBuffer.isView(v)&&t.kind==='list'&&t.element.kind==='f32'?captureTransport(v,t):capture(v,t)) :
+      native ? {javascript: v, type: t, count: t.kind === "list" ? v.length : 1, finite: true} : pack(v, t);
     constants.push(a);
     return {
       kind: "constant",
@@ -735,7 +737,10 @@ export async function loadInk(
     // and returns detached complete results; this is not a borrowed output ABI.
     prepareCall: (name,args) => {
       if(closed)fail('Ink runtime is closed');
-      let prepared=compilePlan({steps:[{id:'result',call:name,args}],outputs:['result']},functions,'capture',true);
+      const requested=resolveBackend(defaultBackend);
+      const transport=['cpu','gpu','gpu-required'].includes(requested)||
+        requested==='auto'&&['cpu','gpu'].includes(earlyDecision?.backend);
+      let prepared=compilePlan({steps:[{id:'result',call:name,args}],outputs:['result']},functions,transport?'capture-transport':'capture',true);
       prepared.reusable=true;
       let stopped=false;
       return Object.freeze({
