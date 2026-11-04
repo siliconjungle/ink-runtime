@@ -59,3 +59,17 @@ test('resident CPU readInto preserves raw float payloads and detached tails',asy
  destination.fill(3);await session.readInto('result',destination);assert.equal(backing[2],0x7fa12345);
  await session.close();assert.equal(backing[3],0x7f800000);await assert.rejects(session.readInto('result',destination),/closed/);
 }));
+
+test('CPU resident writeFrom snapshots values and preserves capacity/lifetime boundaries',async()=>fixture(async runtime=>{
+ const plan=(values,name='f32')=>({inputs:{values},steps:[{id:'result',call:name,args:[{input:'values'}]}],outputs:['result']});
+ const source=await runtime.open(plan([-0,{F32Bits:0x7fa12345},3]),{backend:'cpu'}),target=await runtime.open(plan([0,0,0,0,0]),{backend:'cpu'}),small=await runtime.open(plan([0]),{backend:'cpu'});
+ await assert.rejects(target.writeFrom('values',source,'result'),/iteration/);await source.step();
+ await assert.rejects(target.writeFrom('values',{},'result'),/foreign/);await assert.rejects(target.writeFrom('missing',source,'result'),/input/);await assert.rejects(target.writeFrom('values',source,'missing'),/step/);
+ await assert.rejects(small.writeFrom('values',source,'result'),/capacity/);
+ Object.defineProperty(source,'iteration',{get(){throw Error('public iteration getter must not be trusted')}});
+ await assert.rejects(target.writeFrom('values',Object.create(source),'result'),/foreign/);
+ const transfer=await target.writeFrom('values',source,'result');assert.equal(transfer.counters.readback_bytes,0);
+ await source.write('values',[7,8,9]);await source.step();await source.close();await target.step();
+ const out=new Float32Array([0,0,0,77]);assert.equal((await target.readInto('result',out)).count,3);assert.deepEqual(Array.from(new Uint32Array(out.buffer)),[0x80000000,0x7fa12345,0x40400000,0x429a0000]);
+ await assert.rejects(target.writeFrom('values',source,'result'),/closed/);await target.close();await small.close();
+}));

@@ -188,6 +188,19 @@ unchanged. GPU copying completes before readback unmap, without an intermediate
 Number array or borrowed view. Ordinary `read` remains available and owned.
 This is an explicit output boundary, not a backend-selection or arithmetic rule.
 
+`await target.writeFrom(inputName, source, stepId)` snapshots a current List
+result from another session opened by the same browser runtime. A GPU-to-GPU
+transfer copies only device bytes, preserving logical headers and declared
+capacity bounds. CPU and mixed-backend paths retain the same value semantics
+through owned packed snapshots, with actual transfer counters. Source sessions
+must have run and remain live until the operation is enqueued/executed; foreign
+handles, missing steps, type mismatches and oversized capacities reject. Later
+source writes/steps/close do not change the copied input. The consumer then runs
+normally, returning any required public outputs. Where possible, a single
+already-supported multi-step pipeline avoids even this intermediate copy; the
+new API serves separately prepared sessions and changes no automatic placement
+policy. This browser API does not imply a new native Engine method.
+
 Source-bound representation codecs also transport supported List values through
 Nil/Cons datatypes, preserving nested element types and enforcing depth/length
 limits. Native definition execution retains its separate resource limits.

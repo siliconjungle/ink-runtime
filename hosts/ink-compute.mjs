@@ -201,6 +201,7 @@ export async function loadInk(
     cpuStartup=performance.now()-start;
   }
   let tail=Promise.resolve(), closed=false;
+  const residentSessions=new WeakMap();
   const selector=createSelector({policy,staticBackend,costProfile,targetKey});
   const earlyDecision=policy==='static'||defaultBackend==='auto'&&costProfile===null ? await selector.choose(['cpu','javascript',...(gpu?['gpu']:[])]) : null;
   const staticChoice=policy==='static'?earlyDecision?.backend:null;
@@ -650,6 +651,28 @@ export async function loadInk(
           if(state.cpu)return cpuWrite(p,state.cpu,input,d);
           checkWrite(p,input,d);return adapter.write(state.gpu,p,input,d);
         }),
+        // Copy a source session's current List result into this session's
+        // reserved input. Opaque same-runtime handles prevent foreign buffers,
+        // and the shared queue snapshots before any later source operation.
+        writeFrom:(input,sourceSession,sourceStep)=>serial(async()=>{
+          guard();const source=residentSessions.get(sourceSession);
+          if(!source)fail('foreign resident session');source.guard();
+          const reference=p.inputs.get(input);if(!reference)fail('unknown pipeline input');
+          const index=source.p.ids.get(sourceStep);if(index===undefined)fail('unknown source step');
+          const type=source.p.steps[index].f.result;
+          if(type.kind!=='list'||reference.type.kind!=='list'||!same(type,reference.type))fail('resident List type mismatch');
+          if(!(source.state.gpu?.iteration??source.state.cpu?.iteration??0))fail('source session has not run an iteration');
+          const capacity=source.p.steps[index].count;
+          if(Number.isSafeInteger(capacity)&&capacity>reference.count)fail('resident value exceeds input capacity');
+          if(state.gpu&&source.state.gpu)return adapter.copyFrom(state.gpu,p,input,source.state.gpu,source.p,index);
+          // Device failure/explicit CPU sessions retain complete semantics.
+          let d,readback=0;
+          if(source.state.cpu){const value=source.state.cpu.values[index];d={...value,words:value.words.slice()};}
+          else{const out=await adapter.read(source.state.gpu,source.p,{outputs:[sourceStep]});d=pack(out.values[sourceStep],type);readback=out.counters.readback_bytes;}
+          if(d.count>reference.count)fail('resident value exceeds input capacity');
+          if(state.cpu){if(p.feedback.has(input)&&state.cpu.iteration>0)state.cpu.values[p.feedback.get(input)]=d;state.cpu.inputs.set(input,d);return {counters:{upload_bytes:0,readback_bytes:readback,resident_copy_bytes:d.words.byteLength}};}
+          const out=await adapter.write(state.gpu,p,input,d,true);return {counters:{...out.counters,readback_bytes:readback}};
+        }),
         // The GPU buffer holding a step's current value, for zero-copy use by
         // a renderer on the same device (pass `device` to loadInk). Valid
         // until the next step, write or close of this session.
@@ -658,6 +681,7 @@ export async function loadInk(
         finish:()=>serial(async()=>{guard();if(state.gpu)await adapter.finish();}),
         close:()=>serial(()=>{if(ended)return;ended=true;if(state.gpu)adapter.closeSession(state.gpu);state.cpu=null;}),
       };
+      residentSessions.set(session,{p,state,guard,session});
       return session;
     });
   }
