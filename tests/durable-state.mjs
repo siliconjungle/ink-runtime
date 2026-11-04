@@ -90,3 +90,23 @@ test('legacy receipt field order remains retryable without executing the query',
  const f={...factory,restore:bytes=>{const s=factory.restore(bytes);s.invoke=()=>{called=true;throw Error('retry executed');};return s;}};
  const host=await DurableState.open({factory:f,store});const result=await host.invoke('legacy','read',[]);assert.equal(called,false);assert.equal(result.value,0n);assert(Object.is(result.zero,-0));await host.close();
 });
+test('reads see committed state without receipts or frames; a mutating read requires recovery',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ink-durable-read-'));
+ try{
+  const path=join(dir,'state.inkstate');let store=await openFileStore(path);let host=await DurableState.open({factory,store});
+  await host.invoke('a','add',[5]);const size=(await readFile(path)).length;
+  for(let i=0;i<20;i++)assert.equal((await host.read('read',[])).value,5n);
+  assert.equal((await readFile(path)).length,size,'reads append nothing');
+  await assert.rejects(host.read('add',[1]),RecoveryRequired);await assert.rejects(host.invoke('b','add',[1]),RecoveryRequired);
+  await host.close();
+  store=await openFileStore(path);host=await DurableState.open({factory,store});
+  assert.equal((await host.read('read',[])).value,5n,'reopening discards the unpublished commit');await host.close();
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('a commit whose later publication fails is never served before reopening',async()=>{
+ const store=memory();const host=await DurableState.open({factory,store});await host.invoke('a','add',[1]);
+ const commit=store.commit;store.commit=async()=>{throw Error('disk full');};const append=store.append;store.append=async()=>{throw Error('disk full');};
+ await assert.rejects(host.invoke('b','add',[1]),RecoveryRequired);await assert.rejects(host.read('read',[]),RecoveryRequired);
+ store.commit=commit;store.append=append;await host.close();
+ const again=await DurableState.open({factory,store});assert.equal((await again.read('read',[])).value,1n);await again.close();
+});

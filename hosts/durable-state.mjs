@@ -134,12 +134,32 @@ export class DurableState {
     }catch(error){if(state)dispose(state);await store.close?.();throw error;}
   }
   #enqueue(fn){if(this.#closed)return Promise.reject(Error('Durable host is closed'));const task=this.#tail.then(()=>{if(this.#poison)throw this.#poison;return fn();});this.#tail=task.catch(()=>{});return task;}
+  // States without retained transactions are not copied per call. A compiled
+  // invoke is atomic (an abort or host error leaves state unchanged), so the
+  // only unpublished commit is one followed by a later failure (reply bounds,
+  // receipt encoding or storage). That poisons the host: reopening restores the
+  // last published record. A call costs its execution plus one appended frame,
+  // not a complete snapshot copy.
   async #transaction(fn){
     const retained=await this.#state.beginTransaction?.();
-    const prior=retained?null:this.#state;
-    if(!retained)this.#state=await this.#factory.restore(await snapshot(prior));
-    try{const result=await fn();if(retained)await this.#state.commitTransaction();else dispose(prior);return result;}
-    catch(error){if(retained)await this.#state.rollbackTransaction();else{dispose(this.#state);this.#state=prior;}throw error;}
+    if(retained){
+      try{const result=await fn();await this.#state.commitTransaction();return result;}
+      catch(error){await this.#state.rollbackTransaction();throw error;}
+    }
+    const before=String(version(this.#state));
+    try{return await fn();}
+    catch(error){if(!this.#poison&&String(version(this.#state))!==before)this.#poison=new RecoveryRequired(error);throw error;}
+  }
+  /** A committed-state read with no request id, receipt or frame. Queries only:
+   * a call that changes the version poisons the host, which must be reopened. */
+  read(call,args){
+    let request;try{request=pack({call,args});if(encoder.encode(request).length>MAX_HEADER)throw Error('Request limit');}catch(e){return Promise.reject(e);}
+    return this.#enqueue(async()=>{
+      const before=String(version(this.#state)),captured=unpack(request);
+      const reply=pack(await this.#state.invoke(captured.call,captured.args));
+      if(String(version(this.#state))!==before){this.#poison=new RecoveryRequired(Error('read changed durable state: '+captured.call));throw this.#poison;}
+      return unpack(reply);
+    });
   }
   async #publish(receipts,frame){
     const payload=encoder.encode(JSON.stringify(frame));if(payload.length>MAX_FRAME)throw Error('Durable frame limit');
