@@ -6,7 +6,8 @@
 // finished, so independent requests overlap. The result is the one sequential
 // execution in source order would produce from the same effect replies:
 // a failure ends the task at the earliest failing step in source order, and
-// effects that were started speculatively after it are recorded as discarded.
+// effects that were started speculatively after it are aborted and recorded as
+// discarded.
 //
 // Every value crosses into Ink through generated readonly queries. A handler
 // reply that does not decode to the effect's declared type, fails its
@@ -66,7 +67,15 @@ export async function runTask({manifest, call, task: name, args, effects = {}, r
   const n = t.steps.length, status = new Array(n).fill('waiting'), records = [];
   let failedAt = Infinity, failure = null;
   const used = s => s.uses.map(u => ctx.get(u));
-  const fail = (i, f) => { if (i < failedAt) { failedAt = i; failure = f; } };
+  // Each running effect gets its own abort signal; when an earlier step ends
+  // the task, speculative effects after it are aborted (their replies are
+  // discarded anyway).
+  const controllers = new Map();
+  const fail = (i, f) => {
+    if (i >= failedAt) return;
+    failedAt = i; failure = f;
+    for (const [j, c] of controllers) if (j > i) c.abort(Error('an earlier step ended the task'));
+  };
 
   async function perform(i, s, values) {
     const effect = declared.get(s.callee);
@@ -80,7 +89,12 @@ export async function runTask({manifest, call, task: name, args, effects = {}, r
       const handler = effects[s.callee];
       try {
         if (typeof handler !== 'function') throw Error(`no handler for effect ${s.callee}`);
-        reply = await handler(...values, {effect, step: i, task: name, signal});
+        // Do not start a request an earlier failure already made pointless.
+        if (i > failedAt) throw Error('an earlier step ended the task');
+        const own = new AbortController();
+        controllers.set(i, own);
+        try { reply = await handler(...values, {effect, step: i, task: name, signal: signal ? AbortSignal.any([own.signal, signal]) : own.signal}); }
+        finally { controllers.delete(i); }
         record.reply = reply;
       } catch (e) { failed = true; record.error = String(e?.message ?? e); }
     }

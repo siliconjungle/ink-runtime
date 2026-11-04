@@ -80,6 +80,21 @@ test('rejected replies fall back; the earliest failure in source order wins', as
   assert.equal(failed.trace.effects.find(r => r.step === 4).outcome, 'discarded');
 });
 
+test('speculative effects after a failure are aborted', async () => {
+  const {call} = program();
+  let aborted = null;
+  // a fails at once; d (step 4) is slow and should see its signal abort.
+  const get = async (x, context) => {
+    if (context.step === 0) throw Error('down');
+    if (context.step === 4) return new Promise((resolve, reject) => { context.signal.addEventListener('abort', () => { aborted = context.signal.reason?.message; reject(context.signal.reason); }); setTimeout(() => resolve(1), 500); });
+    return x;
+  };
+  const failed = await runTask({manifest, call, task: 't', args: [1], effects: {get}}).catch(e => e);
+  assert(failed instanceof TaskFailed);
+  assert.equal(aborted, 'an earlier step ended the task');
+  assert.equal(failed.trace.effects.find(r => r.step === 4).outcome, 'discarded');
+});
+
 test('replay detects changed replies and needs no handlers', async () => {
   const {call} = program();
   const {trace} = await runTask({manifest, call, task: 't', args: [2], effects: {get: async x => x}});
