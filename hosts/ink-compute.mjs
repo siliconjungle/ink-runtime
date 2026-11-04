@@ -1,4 +1,4 @@
-import {width,pack,unpack,capture} from "./ink-abi.mjs";
+import {width,pack,unpack,capture,numericDestination} from "./ink-abi.mjs";
 import * as deviceLowering from "./ink-device.mjs";
 const {createDevice,dispatchCount,fieldPath,reducible,decodeComponents,combineWords,lanes} = deviceLowering;
 import {createSelector,profileScope,workloadFeatures,sessionWorkload,sessionContext} from "./backend-selection.mjs";
@@ -228,7 +228,7 @@ export async function loadInk(
     try{workers=createWorkerPool(root,parallelism,{timeoutMs:workerTimeoutMs});}catch{return null}
     return workers;
   }
-  const adapter=createDevice({root, enabled:gpu, device, onLost:()=>{if(closed)return;gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,MAX_BYTES});
+  const adapter=createDevice({root, enabled:gpu, device, onLost:()=>{if(closed)return;gpuFailed=true;selector.clear();placement?.selector.clear()},fail,width,unpack,numericDestination,MAX_BYTES});
   function ensurePacked(p) {
     for(const c of p.constants)if(!c.words)c.words=pack(c.javascript,c.type).words;
     return p;
@@ -552,6 +552,11 @@ export async function loadInk(
   function cpuRead(p, s, q) {
     if(!s.iteration)fail('session has not run an iteration');
     const index=id=>{if(typeof id!=='string')fail('read requires a step id');const i=p.ids.get(id);if(i===undefined)fail('unknown step');return i;};
+    if(Object.hasOwn(q??{},'into')){
+      const i=index(q.step),d=s.values[i],type=p.steps[i].f.result;
+      numericDestination(type,q.into,d.count).set(d.words);
+      return {count:d.count,counters:{readback_bytes:0}};
+    }
     if(q?.outputs!==undefined) {
       if(!Array.isArray(q.outputs))fail('outputs must be an array');
       return {values:Object.fromEntries(q.outputs.map(id=>{const i=index(id);return [p.steps[i].id,unpack(s.values[i].words,p.steps[i].f.result)];})),counters:{readback_bytes:0}};
@@ -632,6 +637,10 @@ export async function loadInk(
         // {step,reduce:'sum'|'min'|'max'|'bounds',field:'a.b'}. Reductions
         // run on the device and return a few words.
         read:request=>serial(async()=>{guard();return state.cpu?cpuRead(p,state.cpu,request):adapter.read(state.gpu,p,request);}),
+        // Flat numeric lists copy raw words into caller-owned typed arrays.
+        // Capacity is checked before writes; the remaining tail is untouched.
+        // No mapped view or borrowed runtime result escapes.
+        readInto:(id,destination)=>serial(async()=>{guard();const request={step:id,into:destination};return state.cpu?cpuRead(p,state.cpu,request):adapter.read(state.gpu,p,request);}),
         // Replace a named input for the next iteration. A fed-back input's
         // carried value is its step's last output, which this replaces.
         write:(input,value)=>serial(async()=>{

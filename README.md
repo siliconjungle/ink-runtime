@@ -178,6 +178,16 @@ CPU. Native `Engine` has the same operations (`open`, `step`, `read`, `write`,
 `view`, `finish`, `close`, `with_device`). See docs/gpu-compute.md in the
 distribution.
 
+Browser compute sessions expose `await session.readInto(stepId, destination)`
+for flat numeric List results on GPU and CPU. Matching Float32Array,
+Float64Array, Uint32Array, Int32Array and BigUint64Array destinations preserve
+raw words, including signed zero and nonfinite float payloads; unsupported
+dtypes and short capacities reject before destination writes. The returned
+receipt contains `count` and actual transfer counters; the unused tail stays
+unchanged. GPU copying completes before readback unmap, without an intermediate
+Number array or borrowed view. Ordinary `read` remains available and owned.
+This is an explicit output boundary, not a backend-selection or arithmetic rule.
+
 Source-bound representation codecs also transport supported List values through
 Nil/Cons datatypes, preserving nested element types and enforcing depth/length
 limits. Native definition execution retains its separate resource limits.
